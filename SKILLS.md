@@ -1,0 +1,210 @@
+# Soulseeker — capabilities reference
+
+Backend-for-frontend for the Rankwarden data. It reads Rankwarden's MongoDB, fetches
+specific players on demand from Blizzard and Raider.io, caches in Redis, pushes
+corrections back to Rankwarden, and protects its API with OAuth 2.0 tokens it issues
+itself.
+
+This document is written for agents that need to test or extend the service. It wins
+over [README.md](README.md) where the two differ in detail. The data model and its
+traps are Rankwarden's: read its handbook and `SKILLS.md` §5 and §9 before writing a
+query.
+
+---
+
+## Scope
+
+**In scope:**
+
+- Serving the front end: everything it reads goes through this service.
+- On-demand lookups of single characters from Blizzard and Raider.io, within
+  **Soulseeker's own** request budgets.
+- Pushing fresher character data to Rankwarden's sync endpoints.
+- Issuing and checking access tokens: the authorization server and the API guards.
+- Its own deployment: Dockerfile, Helm charts for itself and its Redis, scripts, CI.
+
+**Out of scope:**
+
+- **Writing MongoDB.** Never. The database user cannot, and corrections go through
+  Rankwarden's sync endpoints.
+- **Bulk ingestion.** Ladders, archives and passes are Rankwarden's jobs. Soulseeker
+  looks up one character at a time, because a person asked for it.
+- **The database structure.** Collections and indexes belong to Rankwarden's schema
+  step. A query that needs a new index is a change in Rankwarden.
+- **Shared logging and health logic**, which is in `@denipetrov/spirit-link`, and
+  **Blizzard OAuth** for the upstream, which is in `@denipetrov/blizz-auth`.
+
+---
+
+## Agent directives
+
+- **Do not commit, push or merge** unless asked.
+- **Never write a credential anywhere it persists**: not in `.npmrc`, not in a committed
+  file, not in `production.env` (the chart refuses to render one), not in a log or health
+  payload. Tokens go through environment variables or BuildKit secrets.
+- **Never use Rankwarden's Blizzard client or Raider.io key.** Soulseeker has its own, so
+  the two services never compete for one quota.
+- **Tests touch only `soulseeker_test_*` databases and `sstest_*` Redis keys.** The
+  harness refuses anything else.
+- **No write to MongoDB, ever.** `MongoService.collection()` takes only names from
+  `src/database/collections.ts`, and that file lists only collections a reader uses.
+- **Keep the sync DTO mirrors in step** with Rankwarden's
+  (`src/rankwarden/dto/*.dto.ts` ↔ Rankwarden's `src/sync/dto/`). A 400 from Rankwarden
+  is logged at `error` because it means they drifted.
+- **Every route needs a token** unless it is a health probe (`@Public()`).
+
+---
+
+## 1. Stack
+
+Same as Rankwarden, on purpose: Node 24 (engines ≥ 22), TypeScript 6 strict ESM
+(`nodenext`, `.js` import suffixes), NestJS 12 on Express, native `mongodb` 7, `got` 16,
+`zod` 4, Vitest 4 with SWC, ESLint 10 flat config, Prettier. Added: `redis` (node-redis
+6), `oidc-provider` 9 (certified OpenID Connect server, Koa inside), `jose` 6, `helmet`.
+
+`@denipetrov/spirit-link` 0.1: `logLevelsFor`, `withRunId`, `RunLogger`,
+`DependencyHealth`, `probeObservation`, `worstOf`, `hostOf`.
+
+## 2. Module map
+
+| Module | Provides |
+| --- | --- |
+| `AppConfigModule` | `ConfigService<Env, true>`; one zod schema, `src/config/env.schema.ts` |
+| `DatabaseModule` (global) | `MongoService`: typed read collections, cached `ping()` |
+| `RedisModule` (global) | `RedisService` (client, `key()`, `ping()`), `CacheService` |
+| `CommonModule` (global) | `DependencyHealth`, `BlizzardBudget`, `RaiderIoBudget` |
+| `AuthModule` | the OIDC provider, `SessionController`, global `AccessTokenGuard` then `RateLimitGuard` |
+| `BlizzardModule` | `ProfileApi` (profile, specializations, pvp bracket) |
+| `RaiderIoModule` | `RaiderIoCharacterApi` |
+| `RankwardenModule` | `RankwardenSyncClient` |
+| `CharactersModule` | imports the three above; feature controllers and services go here |
+| `HealthModule` | `/health`, `/health/ready` |
+
+`configureApp()` (`src/configure-app.ts`) is shared by `main.ts` and the test harness.
+It sets up the middleware in this order: trust proxy, request logging, helmet, **the OIDC
+provider at `/oidc`**, then CORS for the API. The provider must be mounted before Nest
+registers its body parsers in `init()`, because oidc-provider parses its own form
+bodies. It also answers its own CORS, which is why the API's CORS layer comes after it.
+
+## 3. Upstream budgets
+
+These are separate from Rankwarden's, and shared across replicas through Redis.
+
+| Provider | Windows (usable = limit × utilisation) | Defaults |
+| --- | --- | --- |
+| Blizzard | rolling hour (60 buckets) **and** rolling second (10 buckets) | 32,400/h, 90/s |
+| Raider.io | rolling minute (12 buckets) | 900/min |
+
+- `RedisRollingWindow` checks every window and charges them all in one Lua script, so
+  two replicas cannot both take the last slot.
+- **Every attempt is charged, retries included**: `budget.acquire()` runs in got's
+  `beforeRequest` hook, which runs again for each retry.
+- A spent window shorter than `BUDGET_WAIT_MS` (the per-second one) is waited out. A
+  spent hour or minute throws `BudgetExhaustedError` at once, and the caller should
+  serve stored data. `budgetErrorOf()` unwraps it from got's `RequestError`.
+- Budgets **fail closed**: if Redis is down, no upstream request is sent. Rate limits
+  **fail open**: if Redis is down, the request is let through and a warning is logged.
+- A 404 from Blizzard, or a 400/404 from Raider.io, means "no such character". It
+  resolves to `null` and is recorded as a *successful* upstream call.
+
+## 4. Auth
+
+- **Authorization server.** oidc-provider at `/oidc`. `OIDC_ISSUER` must end in `/oidc`.
+  There is one public client, `soulseeker-web`, with `token_endpoint_auth_method: none`
+  and grants `urn:soulseeker:grant-type:anonymous` and `refresh_token`.
+- **Anonymous grant** (`src/auth/oidc/anonymous.grant.ts`):
+  - It runs `IssuancePolicy.check` first: the Origin must be in `CORS_ORIGINS` (403
+    otherwise), at most `RATE_LIMIT_TOKEN_PER_MINUTE` per IP (429 with Retry-After), and
+    Turnstile when `TURNSTILE_ENABLED` (`turnstile_token` form parameter).
+  - It then creates account `anon:<uuid>`, a Grant scoped to `OIDC_API_RESOURCE` /
+    `api:read`, an access token and a refresh token.
+  - The checks live in the grant, not in middleware, because the grant type is in a body
+    only oidc-provider may parse.
+- **Tokens:**
+  - Access token: ES256 JWT, `typ: at+jwt`, `aud` = the API resource, 600 s.
+  - Refresh token: opaque, 12 h, rotated on every use. Reuse revokes the grant.
+  - The Grant lives at most `OIDC_SESSION_MAX_SECONDS` (30 days). After that the visitor
+    gets a new anonymous session.
+- **Storage.** `oidc-redis.adapter.ts` keeps everything under `<prefix>oidc:*`, with the
+  provider's TTLs, and a per-grant index of keys so a revocation removes them all.
+- **API guard.** `AccessTokenGuard` verifies locally with `jose` against the public JWKS
+  (issuer, audience, `ES256`, `at+jwt`, scope `api:read`) and sets `req.auth`. It makes
+  no network or Redis call. The trade-off is that a revoked session's access token works
+  until it expires, at most 10 minutes.
+- **Keys.** `OIDC_JWKS` holds the private JWK set (required in production). Without it,
+  development generates a key per process. To rotate without logging anyone out, put
+  the new key first and keep the old one until the longest refresh token has expired.
+- **Battle.net login (later).**
+  1. Add `authorization_code` (PKCE is already required) to the client, with
+     `redirect_uris` and `response_types: ['code']`.
+  2. Add an interaction that redirects to Battle.net OAuth and maps the user to
+     `bnet:<id>` in `AccountService.find`.
+  3. Leave the guard alone. If an anonymous session should carry over to the account,
+     do it in the interaction.
+- **What it does not do.** A public client cannot keep a secret, so anonymous tokens
+  slow scraping and make it traceable per session; they do not prevent it. The
+  per-IP and per-session limits and Turnstile are what set the cost.
+
+## 5. MongoDB (read-only)
+
+- Rankwarden's database, as `rankwarden_backend`. `readPreference: primaryPreferred`.
+- Entities in `src/characters/entities/` mirror Rankwarden's document shapes.
+- Reader rules from the Rankwarden handbook that bite:
+  - Filter every query on season and region.
+  - `ratings.<bracket>` queries need `{ $gt: 0 }`. Prefer the flat `*_ratings`
+    collections for boards.
+  - Paginate with a rating cursor, never `skip`.
+  - Per-ladder hero talents come from `profile.talentLoadouts`.
+  - PvP ↔ M+ characters join on region + realmSlug + lowercased name, never on an id.
+  - Skip `mplus_runs` that carry `missedSince`.
+  - Compare `mythicScore` only between characters with the same `dungeonsCovered`.
+  - `2030-01-01` is the placeholder "still running" end date.
+
+## 6. Rankwarden sync
+
+`RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
+
+- It validates against the mirrored DTOs, then POSTs to `RANKWARDEN_BASE_URL`.
+- It never throws. It returns `written`, `invalid` (400), `not-tracked` (404), `busy`
+  (409 after `RANKWARDEN_SYNC_RETRY_LIMIT` retries, backoff `base × 2^n`) or `failed`.
+- Call it **after** responding to the front end. Wrap the call in
+  `withRunId(RunKind.Sync, …)` for log correlation.
+- The PvP endpoint replaces every bracket at once, so send the whole document. The M+
+  endpoint merges runs and never lowers a score. Rankwarden never creates characters.
+
+## 7. Health and logging
+
+- `/health` is liveness and touches nothing. `/health/ready` pings MongoDB and Redis
+  (both hard dependencies, 503 if either is down). Blizzard, Raider.io and Rankwarden
+  are observed from real traffic: a `down` upstream degrades the status to `degraded`
+  but keeps 200.
+- The readiness body includes the budget usage. The public HTTPRoute redirects
+  `/health/ready` to `/health`, so that detail stays inside the cluster.
+- Each request runs under `withRunId('http')`, so every line it causes is tagged
+  `[http a1b2c3]`. Requests are logged at `debug`; a 5xx is logged at `warn`. Query
+  strings are never logged.
+- The Blizzard OAuth check at boot logs an error and records a health failure, but does
+  not stop the boot (Blizzard is a soft dependency here, unlike in Rankwarden).
+
+## 8. Configuration
+
+All variables are validated at start; `npm run config:check` runs the same validation
+without starting. `.env.example` documents each one. Production refuses to start
+without `OIDC_JWKS`, without `OIDC_COOKIE_KEYS`, or with an `http://` issuer. Endpoint
+paths are configuration (`BLIZZARD_PATH_*`, `RAIDERIO_PATH_*`) with checked
+placeholders, as in Rankwarden.
+
+## 9. Testing
+
+- **Unit** (`src/**/*.spec.ts`): no services needed.
+- **Integration** (`test/**/*.spec.ts`):
+  - `bootTestApp()` boots the real `AppModule` through `configureApp()` against real
+    MongoDB and Redis, with every upstream on one local `FakeUpstream` HTTP server
+    (`/blizzard/{region}`, `/raiderio`, `/rankwarden`, `/turnstile`).
+  - Only the Blizzard token provider is replaced. Retries, budget hooks and key
+    redaction run for real.
+  - Two boots in one file that share the upstream represent two replicas
+    (`test/budgets.spec.ts`).
+- **One configuration per test file**: `ConfigModule` reads the environment once per
+  module graph, and the harness refuses a second boot with different settings.
+- `resetRedis(app)` clears the file's keys between tests.

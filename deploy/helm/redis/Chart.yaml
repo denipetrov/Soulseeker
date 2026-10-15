@@ -1,0 +1,8 @@
+apiVersion: v2
+name: redis
+description: >-
+  Soulseeker's Redis: one standalone node with an append-only file, reachable
+  only from Soulseeker's pods.
+type: application
+version: 0.1.0
+appVersion: '8.10.2-alpine'

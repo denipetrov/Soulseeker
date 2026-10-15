@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "redis.labels" . | nindent 4 }}
+spec:
+  # Soulseeker's pods only. The password is the second lock; this is the first.
+  podSelector:
+    matchLabels:
+      {{- include "redis.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 6379
+      from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.clientLabel | nindent 14 }}

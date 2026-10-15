@@ -1,0 +1,71 @@
+# Defaults are the production values for DigitalOcean Kubernetes. Deployed to
+# the `backend` namespace: Rankwarden's NetworkPolicies already admit it to the
+# sync endpoints and to MongoDB.
+
+image:
+  repository: ghcr.io/denipetrov/soulseeker
+  # Set by the deploy: `--set image.tag=v1.2.3`. No default, so a release can
+  # never ship "whatever latest happens to be".
+  tag: ''
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr
+
+# Unlike Rankwarden, any number: every piece of shared state — budgets, rate
+# limits, OAuth grants, cache — is in Redis, so replicas are interchangeable.
+replicas: 2
+
+# Non-secret configuration: an env file inside this chart, turned into the
+# ConfigMap. Every production setting is reviewable in git.
+envFile: env/production.env
+
+# Values laid over the file, for a one-off change without editing it:
+#   --set-string envOverrides.LOG_LEVEL=debug
+envOverrides: {}
+
+secrets:
+  # BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET, RAIDER_IO_API_KEY — Soulseeker's
+  # own, never Rankwarden's — MONGODB_URI for `rankwarden_backend` (read-only),
+  # REDIS_URL with the Redis password, OIDC_JWKS, OIDC_COOKIE_KEYS, and
+  # TURNSTILE_SECRET when Turnstile is on. Created by create-secrets.sh.
+  app: soulseeker-app
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+  limits:
+    # No CPU limit: the service waits on the network far more than it computes.
+    memory: 384Mi
+
+# Node's heap ceiling, below the container limit, so a leak ends as a readable
+# out-of-memory error instead of a silent kill.
+nodeOptions: --max-old-space-size=256
+
+terminationGracePeriodSeconds: 30
+
+# Public entry through the Gateway API. The Gateway itself belongs to the
+# cluster, not to this chart.
+httpRoute:
+  enabled: true
+  hostnames:
+    - api.rankwarden.gg
+  parentRefs:
+    - name: public
+      namespace: gateway
+      sectionName: https
+
+# Who may open a connection: the namespaces the gateway's data plane runs in.
+# Everything else, other pods in `backend` included, is refused. Kubelet
+# probes come from the node and are not subject to it.
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - gateway
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+extraEnv: []

@@ -1,0 +1,38 @@
+# Defaults are the production values for DigitalOcean Kubernetes, in the
+# `backend` namespace next to Soulseeker.
+
+image:
+  repository: redis
+  # Empty means the chart's appVersion: an exact patch, so a restart never
+  # upgrades the server by pulling a newer floating tag.
+  tag: ''
+  pullPolicy: IfNotPresent
+
+# Secret with `password`. Created by deploy/scripts/create-secrets.sh, never
+# by this chart, so the password is never rendered into a manifest.
+authSecret: redis-auth
+
+storage:
+  className: do-block-storage
+  # The append-only file of a few hundred MB of keys. DigitalOcean's minimum.
+  size: 1Gi
+
+# The ceiling Redis holds itself to, kept below the container's memory limit.
+maxmemory: 256mb
+# Every key Soulseeker writes carries a TTL, so `volatile-lru` only ever evicts
+# what would expire anyway — cache entries first, in practice — and never
+# refuses a write. Under `noeviction` a full Redis would refuse to issue
+# tokens, which is worse than a colder cache.
+maxmemoryPolicy: volatile-lru
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 384Mi
+
+# Pods allowed to connect: those in this namespace carrying this label (set by
+# the Soulseeker chart). Everything else is refused.
+clientLabel:
+  soulseeker.io/redis-client: 'true'

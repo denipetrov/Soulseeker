@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": ["$tsc"],
+      "group": { "kind": "build", "isDefault": true },
+      "label": "npm: build",
+      "detail": "nest build"
+    },
+    {
+      "type": "npm",
+      "script": "test",
+      "problemMatcher": [],
+      "group": { "kind": "test", "isDefault": true },
+      "label": "npm: test",
+      "detail": "vitest run --project unit"
+    },
+    {
+      "type": "npm",
+      "script": "db:up",
+      "problemMatcher": [],
+      "label": "npm: db:up",
+      "detail": "docker compose up -d (Redis)"
+    },
+    {
+      "label": "prepare: redis + build",
+      "dependsOrder": "sequence",
+      "dependsOn": ["npm: db:up", "npm: build"],
+      "problemMatcher": []
+    }
+  ]
+}

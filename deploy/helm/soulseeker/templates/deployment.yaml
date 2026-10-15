@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "soulseeker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # New pods first, old ones after: the API stays up through a deploy. Safe
+  # here, unlike in Rankwarden, because replicas share every budget in Redis.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "soulseeker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "soulseeker.labels" . | nindent 8 }}
+        app.kubernetes.io/component: service
+        # Admitted by the Redis chart's NetworkPolicy.
+        soulseeker.io/redis-client: 'true'
+      annotations:
+        # Environment is read once, at start: a config-only release must
+        # restart the pods to take effect.
+        checksum/config: {{ include "soulseeker.env" . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "soulseeker.podSecurity" . | nindent 8 }}
+      # One replica per node where possible, so a node failure takes one, not all.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "soulseeker.selectorLabels" . | nindent 14 }}
+      containers:
+        - name: soulseeker
+          image: {{ include "soulseeker.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Values.secrets.app }}
+          env:
+            - name: NODE_OPTIONS
+              value: {{ .Values.nodeOptions | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 3001
+          # Liveness and startup use `/health`, which touches no dependency.
+          # Readiness uses `/health/ready`: 503 when MongoDB or Redis is
+          # unreachable, `degraded` with 200 for an upstream outage.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            {{- include "soulseeker.containerSecurity" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "soulseeker.labels" . | nindent 4 }}
+spec:
+  # Reached from outside only through the HTTPRoute.
+  type: ClusterIP
+  selector:
+    {{- include "soulseeker.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: soulseeker
+description: >-
+  The Soulseeker backend-for-frontend: stateless replicas behind the cluster
+  gateway, reading Rankwarden's MongoDB and keeping its state in Redis.
+type: application
+version: 0.1.0
+appVersion: '0.1.0'

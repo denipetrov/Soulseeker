@@ -1,0 +1,78 @@
+# Local development stack. Auth is deliberately off so MONGODB_URI stays
+# mongodb://localhost:27017 and REDIS_URL redis://localhost:6379 — do not reuse
+# this file for anything deployed.
+#
+# Soulseeker only reads MongoDB, and the data it reads is Rankwarden's. So by
+# default this starts Redis alone and Soulseeker reads the MongoDB that
+# Rankwarden's own compose file runs on the same port. Without Rankwarden
+# running, start a MongoDB of its own as well:
+#   docker compose --profile standalone up -d
+services:
+  redis:
+    image: redis:8
+    container_name: soulseeker-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Soulseeker itself, from the image `npm run docker:build` makes:
+  #   npm run docker:up
+  # Reads .env, with the two hosts swapped for what the container can reach:
+  # Redis on this network, and MongoDB on the host (Rankwarden's, or the
+  # standalone one below, both published on 27017).
+  app:
+    image: soulseeker:local
+    container_name: soulseeker-app
+    profiles: [app]
+    restart: unless-stopped
+    ports:
+      - '3001:3001'
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://host.docker.internal:27017
+      # Avast (or any TLS-scanning proxy) re-signs the container's HTTPS too.
+      # Point this at its root certificate, mounted below, or leave it unset.
+      NODE_EXTRA_CA_CERTS: ${DOCKER_EXTRA_CA:+/certs/extra-ca.pem}
+    volumes:
+      - ${DOCKER_EXTRA_CA:-/dev/null}:/certs/extra-ca.pem:ro
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3001/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:8
+    container_name: soulseeker-mongo
+    profiles: [standalone]
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGODB_DB:-rankwarden}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  mongo-data:
+  redis-data:
