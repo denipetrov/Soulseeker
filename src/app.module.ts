@@ -7,6 +7,7 @@ import { AppConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { RedisModule } from './redis/redis.module.js';
+import { SearchModule } from './search/search.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RedisModule } from './redis/redis.module.js';
     CommonModule,
     AuthModule,
     CharactersModule,
+    SearchModule,
     HealthModule,
   ],
 })

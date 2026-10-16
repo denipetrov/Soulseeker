@@ -316,6 +316,8 @@ export const envSchema = z.object({
   // Cache.
   CACHE_DEFAULT_TTL_SECONDS: positiveInt(300),
   CACHE_CHARACTER_TTL_SECONDS: positiveInt(900),
+  /** How long one search prefix's suggestions are reused. Short: ladders move hourly. */
+  SEARCH_CACHE_TTL_SECONDS: positiveInt(60),
 });
 
 const validatedEnvSchema = envSchema.superRefine((env, ctx) => {

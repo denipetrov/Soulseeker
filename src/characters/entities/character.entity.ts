@@ -53,6 +53,8 @@ export interface CharacterDocument {
   characterId: number;
   characterType: 'PvP';
   characterName: string;
+  /** `characterName` folded by spirit-link's `searchNameOf`; indexed as `character_search`. */
+  searchName: string;
   realmId: number;
   realmSlug: string;
   faction: 'ALLIANCE' | 'HORDE' | null;
