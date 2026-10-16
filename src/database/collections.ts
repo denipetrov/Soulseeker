@@ -39,3 +39,17 @@ export const Collections = {
 } as const;
 
 export type ReadCollection = (typeof Collections)[keyof typeof Collections];
+
+/**
+ * Rankwarden index names Soulseeker relies on by name, for `hint`. Part of the
+ * same contract as the collection names: renaming one on Rankwarden's side
+ * makes every hinted query here fail, loudly, rather than run without it.
+ */
+export const Indexes = {
+  /** `{ searchName: 1 }` on `characters`. */
+  CharacterSearch: 'character_search',
+  /** `{ searchName: 1 }` on `mplus_characters`. */
+  MplusCharacterSearch: 'mplus_character_search',
+  /** `{ searchName: 1 }` on `guilds`. */
+  GuildSearch: 'guild_search',
+} as const;

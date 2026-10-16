@@ -160,7 +160,35 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
   - Compare `mythicScore` only between characters with the same `dungeonsCovered`.
   - `2030-01-01` is the placeholder "still running" end date.
 
-## 6. Rankwarden sync
+## 6. Search suggestions
+
+`GET /search/suggestions?type=pvp|pve&q=<letters>` (`src/search/`):
+
+- **Input.** `type` is case-insensitive. `q` is folded with spirit-link's `searchNameOf`
+  (from `@denipetrov/spirit-link/search`), the function Rankwarden stores `searchName`
+  with, and must then be at least 2 characters. Use the shared function, never a local
+  copy, or some names stop being found.
+- **Query.** It is `{ searchName: { $regex: '^' + escapeRegex(prefix) } }`: anchored, with
+  no `i` flag, so MongoDB answers it as an index range.
+- **Index hint.** Each query is pinned with `hint` to `character_search`,
+  `mplus_character_search` or `guild_search` (`Indexes` in `collections.ts`). Without
+  it, the current-season `$or` next to it would draw the planner to the season indexes.
+  On the local data a search reads 4 keys and takes 0 ms.
+- **What is searched.**
+  - PvP: `characters` of the current season per region (`season_state`, cached 60 s in
+    memory).
+  - PvE: `mplus_characters` of the current season per region (`mplus_season_state`),
+    and `guilds`.
+  - At most 100 per list, in `searchName` order.
+- **Results.**
+  - Mythic+ characters have no hero talents, so `heroTalents` is always null for them.
+  - PvP characters Rankwarden has not enriched yet answer null for class, spec, race
+    and realm name.
+  - Faction is lowercased for both.
+- **Cache.** Whole answers are cached in Redis per type and prefix for
+  `SEARCH_CACHE_TTL_SECONDS` (60).
+
+## 7. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
 
@@ -172,7 +200,7 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
 
-## 7. Health and logging
+## 8. Health and logging
 
 - `/health` is liveness and touches nothing. `/health/ready` pings MongoDB and Redis
   (both hard dependencies, 503 if either is down). Blizzard, Raider.io and Rankwarden
@@ -186,7 +214,7 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - The Blizzard OAuth check at boot logs an error and records a health failure, but does
   not stop the boot (Blizzard is a soft dependency here, unlike in Rankwarden).
 
-## 8. Configuration
+## 9. Configuration
 
 All variables are validated at start; `npm run config:check` runs the same validation
 without starting. `.env.example` documents each one. Production refuses to start
@@ -194,7 +222,7 @@ without `OIDC_JWKS`, without `OIDC_COOKIE_KEYS`, or with an `http://` issuer. En
 paths are configuration (`BLIZZARD_PATH_*`, `RAIDERIO_PATH_*`) with checked
 placeholders, as in Rankwarden.
 
-## 9. Testing
+## 10. Testing
 
 - **Unit** (`src/**/*.spec.ts`): no services needed.
 - **Integration** (`test/**/*.spec.ts`):

@@ -17,8 +17,8 @@ access token issued by Soulseeker itself.
 
 **State of the code:** a runnable skeleton. Configuration, logging, health, MongoDB,
 Redis, both upstream clients with their budgets, the Rankwarden sync client and OAuth
-are wired and tested. The front-end feature endpoints (character lookup, ladders) are
-the next piece of work; `src/characters/` is where they go.
+are wired and tested. The first front-end endpoint, search suggestions, is in
+`src/search/`; character lookups and ladders come next.
 
 ## How a request is handled
 
@@ -76,6 +76,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /oidc/.well-known/openid-configuration`, `/oidc/jwks` | none | Discovery and public keys |
 | `POST /oidc/token/revocation` | none | Revoke a refresh token (logout) |
 | `GET /session` | token | Who the token says the caller is |
+| `GET /search/suggestions?type=pvp&q=…` (or `type=pve`) | token | Name suggestions as the visitor types: PvP characters, or Mythic+ characters and guilds; accent- and case-insensitive |
 | `GET /health` | none | Liveness: process only |
 | `GET /health/ready` | none | Readiness: 503 if MongoDB or Redis is down; upstreams only degrade it |
 

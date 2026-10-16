@@ -43,6 +43,8 @@ export interface MplusCharacterDocument {
   /** NFC-normalised, lowercased name. */
   nameKey: string;
   characterName: string;
+  /** `characterName` folded by spirit-link's `searchNameOf`; indexed as `mplus_character_search`. */
+  searchName: string;
   characterType: 'M+';
   /** For links to raider.io only; not Blizzard's id. */
   rioCharacterId: number | null;
