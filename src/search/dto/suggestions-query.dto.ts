@@ -28,12 +28,23 @@ export const suggestionsQuerySchema = z.object({
   type: z
     .string()
     .transform((value) => value.toLowerCase())
-    .pipe(z.enum([SearchType.PvP, SearchType.PvE])),
+    .pipe(z.enum([SearchType.PvP, SearchType.PvE]))
+    .meta({
+      description: 'PvP: current PvP characters. PvE: Mythic+ characters and guilds. Any case.',
+      enum: [SearchType.PvP, SearchType.PvE],
+      example: SearchType.PvP,
+    }),
   q: z
     .string()
     .max(MAX_QUERY_LENGTH)
     .transform((value) => searchNameOf(value))
-    .pipe(z.string().min(MIN_QUERY_LENGTH)),
+    .pipe(z.string().min(MIN_QUERY_LENGTH))
+    .meta({
+      description:
+        `Start of a name; case and accents are ignored ("biba" finds "Bìbà"). ` +
+        `At least ${MIN_QUERY_LENGTH} letters.`,
+      example: 'biba',
+    }),
 });
 
 export type SuggestionsQuery = z.infer<typeof suggestionsQuerySchema>;

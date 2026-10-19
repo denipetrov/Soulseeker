@@ -48,6 +48,43 @@ export class CacheService {
     }
   }
 
+  /** Several values in one round trip; a missing or unreadable one is null. */
+  async getMany<T>(keys: readonly string[]): Promise<(T | null)[]> {
+    if (keys.length === 0) return [];
+
+    try {
+      const raw = await this.redis.client.mGet(keys.map((key) => this.redis.key('cache', key)));
+
+      return raw.map((value) => (value === null ? null : (JSON.parse(value) as T)));
+    } catch (error) {
+      this.logger.warn(`Cache read failed for ${keys.length} keys: ${describeError(error)}`);
+      return keys.map(() => null);
+    }
+  }
+
+  /**
+   * Several values in one transaction, all with the same TTL, so they expire
+   * together and a reader never finds half of a set.
+   */
+  async setMany(
+    entries: ReadonlyMap<string, unknown>,
+    ttlSeconds = this.defaultTtlSeconds,
+  ): Promise<void> {
+    if (entries.size === 0) return;
+
+    try {
+      const multi = this.redis.client.multi();
+      for (const [key, value] of entries) {
+        multi.set(this.redis.key('cache', key), JSON.stringify(value), {
+          expiration: { type: 'EX', value: ttlSeconds },
+        });
+      }
+      await multi.exec();
+    } catch (error) {
+      this.logger.warn(`Cache write failed for ${entries.size} keys: ${describeError(error)}`);
+    }
+  }
+
   async delete(key: string): Promise<void> {
     try {
       await this.redis.client.del(this.redis.key('cache', key));

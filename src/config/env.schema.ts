@@ -318,6 +318,10 @@ export const envSchema = z.object({
   CACHE_CHARACTER_TTL_SECONDS: positiveInt(900),
   /** How long one search prefix's suggestions are reused. Short: ladders move hourly. */
   SEARCH_CACHE_TTL_SECONDS: positiveInt(60),
+  /** PvP seasons and their title cutoffs: they change a few times a day at most. */
+  PVP_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long one leaderboard page is reused. Rankwarden rewrites the ladders hourly. */
+  LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(60),
 });
 
 const validatedEnvSchema = envSchema.superRefine((env, ctx) => {
