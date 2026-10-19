@@ -188,7 +188,45 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - **Cache.** Whole answers are cached in Redis per type and prefix for
   `SEARCH_CACHE_TTL_SECONDS` (60).
 
-## 7. Rankwarden sync
+## 7. PvP seasons and title cutoffs
+
+`PvpSeasonsService` (`src/pvp/seasons/`) is what the leaderboard endpoint reads for season
+detail and the cutoff of the ladder it shows.
+
+- **Methods.**
+  - `season(region, id)`, `currentSeason(region)`, `seasons(region)` (newest first, no
+    cutoffs).
+  - `cutoff(region, id, bracket)`, by the ladder name: `3v3`, `rbg`, `shuffle-mage-fire`.
+- **Where the data comes from.** Rankwarden's `season_state` (the live season, with its
+  moving `rewards`) and `archive_seasons` (finished seasons, with final `rewards`). A
+  season in both, because it ended and was archived but not yet replaced, is taken from
+  the archive and still marked `current`.
+- **Cache.**
+  - One Redis entry per region and season, `pvp:season:<region>:<id>` (~15–23 KB), plus
+    an index `pvp:seasons`.
+  - All are written in one transaction with `PVP_SEASONS_CACHE_TTL_SECONDS` (3600), so
+    they expire together.
+  - A miss reads both collections whole (~64 documents, ~40 ms) and refills every
+    entry. There is a single flight per replica.
+  - The index tells "not cached" from "no such season", so unknown season ids never
+    reach MongoDB.
+- **Shape.**
+  - `cutoffs['2v2' | '3v3' | 'rbg']`.
+  - `specCutoffs.shuffle | blitz['<class>-<spec>']`, keyed by the ladder name without its
+    family.
+  - Each cutoff is `{ rating, title, achievementId, factions }`.
+- **Traps in the data.**
+  - **2v2 never has a cutoff**: it awards no title, so it is always null.
+  - **Factions.** RBG and Blitz always list Alliance and Horde (different titles, so far
+    the same rating), and `factions` holds both. Up to season 33, 3v3 and RBG cutoffs
+    really differ per faction (US s28 3v3: 3071 / 2953). Then `rating` is null and the
+    front end must show `factions`.
+  - **Gaps.** Solo Shuffle has cutoffs from season 34, Blitz from season 38, and TW
+    season 37 has no rewards at all. A missing ladder is null, or absent from
+    `specCutoffs`.
+  - **Live cutoffs move** until the season ends; `final: false` marks them.
+
+## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
 
@@ -200,7 +238,7 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
 
-## 8. Health and logging
+## 9. Health and logging
 
 - `/health` is liveness and touches nothing. `/health/ready` pings MongoDB and Redis
   (both hard dependencies, 503 if either is down). Blizzard, Raider.io and Rankwarden
@@ -214,7 +252,7 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - The Blizzard OAuth check at boot logs an error and records a health failure, but does
   not stop the boot (Blizzard is a soft dependency here, unlike in Rankwarden).
 
-## 9. Configuration
+## 10. Configuration
 
 All variables are validated at start; `npm run config:check` runs the same validation
 without starting. `.env.example` documents each one. Production refuses to start
@@ -222,7 +260,7 @@ without `OIDC_JWKS`, without `OIDC_COOKIE_KEYS`, or with an `http://` issuer. En
 paths are configuration (`BLIZZARD_PATH_*`, `RAIDERIO_PATH_*`) with checked
 placeholders, as in Rankwarden.
 
-## 10. Testing
+## 11. Testing
 
 - **Unit** (`src/**/*.spec.ts`): no services needed.
 - **Integration** (`test/**/*.spec.ts`):
