@@ -9,6 +9,7 @@ import { ANONYMOUS_GRANT_TYPE, API_READ_SCOPE, SIGNING_ALG } from '../auth.const
 import type { AccountService } from './account.service.js';
 import { ANONYMOUS_GRANT_PARAMS, anonymousGrantHandler } from './anonymous.grant.js';
 import type { IssuancePolicy } from './issuance-policy.service.js';
+import { issuanceOrigins } from './issuance-origins.js';
 import { redisAdapterFactory } from './oidc-redis.adapter.js';
 import type { SigningKeys } from './signing-keys.js';
 
@@ -33,7 +34,7 @@ export function createOidcProvider(
 ): Provider {
   const issuer = config.get('OIDC_ISSUER', { infer: true });
   const resource = config.get('OIDC_API_RESOURCE', { infer: true });
-  const origins = new Set(config.get('CORS_ORIGINS', { infer: true }));
+  const origins = issuanceOrigins(config);
   const accessTokenTtl = config.get('OIDC_ACCESS_TOKEN_TTL_SECONDS', { infer: true });
   const refreshTokenTtl = config.get('OIDC_REFRESH_TOKEN_TTL_SECONDS', { infer: true });
   const sessionMax = config.get('OIDC_SESSION_MAX_SECONDS', { infer: true });

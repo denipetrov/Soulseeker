@@ -77,8 +77,20 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `POST /oidc/token/revocation` | none | Revoke a refresh token (logout) |
 | `GET /session` | token | Who the token says the caller is |
 | `GET /search/suggestions?type=pvp&q=…` (or `type=pve`) | token | Name suggestions as the visitor types: PvP characters, or Mythic+ characters and guilds; accent- and case-insensitive |
+| `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | token | A PvP ladder page: live ratings enriched from `characters`, or a finished season's archive; optional `class`/`spec` for the current season |
 | `GET /health` | none | Liveness: process only |
 | `GET /health/ready` | none | Readiness: 503 if MongoDB or Redis is down; upstreams only degrade it |
+
+## API docs
+
+Outside production, Swagger UI is at **http://localhost:3001/docs** (the spec at
+`/docs/openapi.json`); in production both are absent.
+
+1. Open `POST /oidc/token` and press **Try it out**, then **Execute**. The defaults are
+   the anonymous grant.
+2. Copy `access_token` from the response.
+3. Press **Authorize**, paste the token, and every other route can then be tried. A
+   token lasts 10 minutes; repeat step 1 for a new one.
 
 ## Testing
 

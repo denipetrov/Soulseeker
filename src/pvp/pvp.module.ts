@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
 
+import { LeaderboardController } from './leaderboard/leaderboard.controller.js';
+import { LeaderboardService } from './leaderboard/leaderboard.service.js';
 import { PvpSeasonsService } from './seasons/pvp-seasons.service.js';
 
-/**
- * The PvP leaderboards. Today: the seasons and their title cutoffs, cached,
- * for the leaderboard endpoint to read.
- */
+/** The PvP leaderboards, and the seasons and title cutoffs they show. */
 @Module({
-  providers: [PvpSeasonsService],
+  controllers: [LeaderboardController],
+  providers: [PvpSeasonsService, LeaderboardService],
   exports: [PvpSeasonsService],
 })
 export class PvpModule {}

@@ -226,6 +226,53 @@ detail and the cutoff of the ladder it shows.
     `specCutoffs`.
   - **Live cutoffs move** until the season ends; `final: false` marks them.
 
+### PvP leaderboard
+
+`GET /pvp/leaderboard?region=&seasonId=&bracket=[&class=&spec=][&page=&pageSize=]`
+(`src/pvp/leaderboard/`). The parameters:
+
+- `bracket` is a family (`2v2`, `3v3`, `rbg`, `shuffle`, `blitz`) or one spec ladder by
+  name (`shuffle-mage-fire`, the same as `bracket=shuffle&class=mage&spec=fire`).
+- `class` and `spec` are slugs; `spec` needs `class`.
+- `page` is 1-based; `pageSize` defaults to 50, at most 100, and no page may start past
+  row 200,000.
+
+How it reads each kind of season:
+
+- **Current season** (`season.current`):
+  - Rows come from the family's `*_ratings` collection, `rating` descending, through
+    Rankwarden's `board_order`, `class_board` or `spec_board` index.
+  - One batch read of `characters` (by season, region and `$in` ids) adds the name,
+    realm, faction and `brackets[<row.bracket>]` (rank, played, won, lost). It also adds
+    the profile: class, spec, gender, level, race, hero talents and `profileStatus`.
+  - Hero talents come from the spec loadout on spec ladders, and from the active tree
+    on 2v2, 3v3 and RBG.
+- **Archived season**:
+  - Rows come from `archive_entries`, which carry everything inline and have no
+    profile fields; those keys are absent, not null.
+  - One archived ladder at a time, through `archive_board`. 2v2, 3v3 and RBG take no
+    class or spec (400 if given).
+  - Shuffle and Blitz are archived per spec only, so they must name both `class` and
+    `spec`, which picks that spec's ladder. A whole-family board or a class alone is 400.
+    The front end never asks for either.
+
+The response and its fields:
+
+- **`inTitleRange`** is `rating >= cutoff` of the row's own ladder (`cutoffOf(season,
+  row.bracket)`). Where the cutoffs differ by faction, the character's faction decides.
+  With no cutoff (2v2, no rewards recorded) it is false. The board-level `cutoff` is
+  null for 2v2 and for a board mixing several specs.
+- **`rank`** is Blizzard's rank on the row's ladder. On a live all-specs Shuffle or Blitz
+  board it is the rank within that spec, not the position. The front end orders by
+  `rating` and numbers such a board itself.
+- **Paging** uses skip and limit, which read only index keys: 100,000 deep costs ~40 ms
+  on the largest board (Shuffle, ~120,000 rows). `total` is a `countDocuments` on the
+  same filter, and `totalPages` comes with it.
+- **Cache.** Whole pages are cached in Redis for `LEADERBOARD_CACHE_TTL_SECONDS` (60).
+- **Enrichment gaps.** On 2v2, 3v3 and RBG, rows only have a class once Rankwarden has
+  enriched the character. A class filter there leaves the others out, and today every
+  EU 3v3 row is unenriched, so `class=` returns nothing for EU.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
@@ -237,6 +284,30 @@ detail and the cutoff of the ladder it shows.
   `withRunId(RunKind.Sync, …)` for log correlation.
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
+
+### API docs
+
+`@nestjs/swagger` (`src/docs/`), served at `/docs` (`/docs/openapi.json`) only when
+`NODE_ENV` is not `production`. The docs map every route, and anonymous tokens exist to
+make scraping harder.
+
+- **Query parameters come from the zod schemas** through `ApiZodQuery(schema)`
+  (`z.toJSONSchema`, `io: 'input'`, `target: 'openapi-3.0'`). They cannot drift from
+  validation.
+  - Fields that normalise before validating (`region`, `class`, `type`) lose their enum
+    on the way, so they carry it in `.meta({ enum, description, example })`.
+  - A new route documents its query with `@ApiZodQuery(itsSchema)`, plus
+    `@ApiBearerAuth(BEARER_AUTH)` unless it is `@Public()`.
+- **Responses** are TypeScript interfaces, so they are documented by example
+  (`@ApiOkResponse({ schema: { example } })`).
+- **The token endpoint** is oidc-provider's, not a Nest route, so `swagger.ts` adds it
+  to the document by hand. That is what lets "Try it out" obtain a token.
+- **Origin.** For that to work, outside production the service's own origin (from
+  `OIDC_ISSUER`) is allowed to obtain tokens next to `CORS_ORIGINS`. See
+  `issuance-origins.ts`, used by both the issuance policy and oidc-provider's CORS.
+- **Helmet** gets a separate policy on `/docs` without `upgrade-insecure-requests`.
+  Under plain http that directive sends the browser to `https://localhost` for the UI's
+  own scripts, and the page stays blank. The API keeps the full policy.
 
 ## 9. Health and logging
 

@@ -8,6 +8,7 @@ import { describeError } from '../../common/utils/errors.js';
 import type { Env } from '../../config/env.schema.js';
 import { RedisService } from '../../redis/redis.service.js';
 import { FixedWindowCounter } from '../fixed-window-counter.js';
+import { issuanceOrigins } from './issuance-origins.js';
 
 /** A refusal with its own HTTP status, in the shape oidc-provider renders. */
 class IssuanceRefused extends errors.OIDCProviderError {
@@ -38,7 +39,7 @@ export class IssuancePolicy {
   private readonly turnstile: { secret: string; verifyUrl: string } | null;
 
   constructor(config: ConfigService<Env, true>, redis: RedisService) {
-    this.origins = new Set(config.get('CORS_ORIGINS', { infer: true }));
+    this.origins = issuanceOrigins(config);
     this.perIp = new FixedWindowCounter(
       redis.client,
       redis.key('rl', 'token', ''),

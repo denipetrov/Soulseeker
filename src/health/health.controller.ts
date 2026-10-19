@@ -1,4 +1,10 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiServiceUnavailableResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import {
   DependencyHealth,
@@ -26,6 +32,7 @@ import { RedisService } from '../redis/redis.service.js';
  * since restarting would not fix them and stored data still serves. Upstreams
  * are observed from real traffic, never probed. Liveness touches nothing.
  */
+@ApiTags('health')
 @Public()
 @Controller('health')
 export class HealthController {
@@ -47,12 +54,19 @@ export class HealthController {
 
   /** Liveness. Process-local only, so it answers under any dependency outage. */
   @Get()
+  @ApiOperation({ summary: 'Liveness: the process is up. Touches no dependency.' })
+  @ApiOkResponse({ description: 'Always, while the process runs.' })
   status() {
     return { status: 'ok', uptimeSeconds: Math.round(process.uptime()) };
   }
 
   /** Readiness. Pings MongoDB and Redis; reports what real traffic saw of the upstreams. */
   @Get('ready')
+  @ApiOperation({
+    summary: 'Readiness: MongoDB and Redis pinged, upstreams as real traffic saw them',
+  })
+  @ApiOkResponse({ description: '`ok` or `degraded` (an upstream is failing).' })
+  @ApiServiceUnavailableResponse({ description: 'MongoDB or Redis is unreachable. Same body.' })
   async ready() {
     const [mongoPing, redisPing] = await Promise.all([this.mongo.ping(), this.redis.ping()]);
     const redact = (value: string) => this.dependencies.redact(value);

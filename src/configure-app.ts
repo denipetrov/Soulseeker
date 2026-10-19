@@ -1,11 +1,13 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import type Provider from 'oidc-provider';
 
 import { OIDC_MOUNT_PATH, OIDC_PROVIDER } from './auth/auth.constants.js';
 import { requestLogging } from './common/logging/request-logging.middleware.js';
 import type { Env } from './config/env.schema.js';
+import { docsEnabled, DOCS_PATH, setupSwagger } from './docs/swagger.js';
 
 /**
  * Everything that has to be in front of Nest's own routing, in order. Shared by
@@ -23,7 +25,20 @@ export function configureApp(app: NestExpressApplication): void {
   app.disable('x-powered-by');
 
   app.use(requestLogging);
-  app.use(helmet());
+
+  const docs = docsEnabled(config);
+  const apiHeaders = helmet();
+  // Swagger UI over plain http: helmet's default `upgrade-insecure-requests`
+  // sends the browser to https://localhost for the UI's own scripts, and the
+  // page stays blank. Everything else about the policy is kept.
+  const docsHeaders = helmet({
+    contentSecurityPolicy: { directives: { upgradeInsecureRequests: null } },
+  });
+  app.use((req: Request, res: Response, next: NextFunction) =>
+    docs && req.path.startsWith(`/${DOCS_PATH}`)
+      ? docsHeaders(req, res, next)
+      : apiHeaders(req, res, next),
+  );
 
   // Before CORS: oidc-provider answers its own CORS, per client, and a second
   // layer would send every header twice.
@@ -37,6 +52,10 @@ export function configureApp(app: NestExpressApplication): void {
     exposedHeaders: ['retry-after', 'www-authenticate'],
     maxAge: 600,
   });
+
+  // Not behind the API's guards: these are plain HTTP routes, not Nest
+  // controllers. Off in production.
+  if (docs) setupSwagger(app, config);
 
   app.enableShutdownHooks();
 }

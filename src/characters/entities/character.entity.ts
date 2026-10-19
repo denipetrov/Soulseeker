@@ -78,4 +78,33 @@ export interface RatingRow {
   characterId: number;
   rating: number;
   fetchedAt: Date;
+  /**
+   * Class and spec slugs (`deathknight`, `unholy`). From the ladder name on
+   * Shuffle and Blitz, so always set there; from the enriched profile on 2v2,
+   * 3v3 and RBG, so null until Rankwarden has enriched the character.
+   * Indexed as `class_board` and `spec_board`.
+   */
+  class: string | null;
+  spec: string | null;
+}
+
+/**
+ * A row of Rankwarden's `archive_entries`: a final standing in a finished
+ * season, self-contained (it does not point into the live collections, which
+ * may have been purged). Top 5,000 per ladder; Shuffle and Blitz per spec only.
+ */
+export interface ArchiveEntry {
+  seasonId: number;
+  region: Region;
+  bracket: string;
+  characterId: number;
+  characterName: string;
+  realmId: number;
+  realmSlug: string;
+  faction: 'ALLIANCE' | 'HORDE' | null;
+  rank: number;
+  rating: number;
+  played: number;
+  won: number;
+  lost: number;
 }
