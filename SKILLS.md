@@ -285,6 +285,39 @@ The response and its fields:
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
 
+### Spec representation
+
+`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&getEarliestDate=true]`
+(`src/pvp/representation/`). It reads one snapshot from Rankwarden's
+`spec_representation` straight from MongoDB.
+
+- **Not cached, on purpose.** The collection is a few hundred small documents, and a
+  request reads one, or two with `getEarliestDate`.
+- **Parameters.**
+  - `rating` must be one of `REPRESENTATION_MIN_RATINGS` from
+    `@denipetrov/spirit-link/constants` (≥ 0.3.0): `1500, 1800, 2100, 2300, 2700`.
+    Rankwarden writes snapshots at exactly those, and the front end offers the same
+    list.
+  - `bracket` is a family (`2v2` … `blitz`).
+  - `date` is a UTC day, `YYYY-MM-DD`; impossible days such as `2026-02-30` are 400.
+  - `date=latest` answers the newest snapshot stored for that region, bracket and
+    rating: the newest by `date`, whether or not it has classified specs. It covers the
+    hours after midnight UTC before Rankwarden has computed the day. The response
+    `date` is the day actually answered.
+- **No season parameter.** Rankwarden deletes snapshots from before the current season,
+  so a day names one season. On a rollover day the newer season wins.
+- **404** when there is no snapshot: for a day (today before the daily job has run, or a
+  day the job missed), or for `latest` with nothing stored at all. A 200 therefore
+  always carries a real snapshot. The front end's first load should ask for
+  `date=latest&getEarliestDate=true`, which answers as soon as Rankwarden has written
+  one day.
+- **`earliestDate`** is the first day whose snapshot has `classified > 0` for the same
+  region, bracket and rating. Snapshots from before Rankwarden enriched a 2v2, 3v3 or
+  RBG ladder count players but name no spec, and the calendar should not offer them.
+  It is null when no day qualifies, which is every EU 2v2, 3v3 and RBG snapshot today.
+- **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
+  `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
+
 ### API docs
 
 `@nestjs/swagger` (`src/docs/`), served at `/docs` (`/docs/openapi.json`) only when
