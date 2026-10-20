@@ -99,7 +99,12 @@ export const leaderboardQuerySchema = z
       const ladderSpec = rest.join('');
 
       if (!(CLASSES as readonly string[]).includes(ladderClass ?? '') || !ladderSpec) {
-        ctx.addIssue({ code: 'custom', path: ['bracket'], message: `unknown ladder "${bracket}"` });
+        // Not echoed: an error message is no place to reflect what a client sent.
+        ctx.addIssue({
+          code: 'custom',
+          path: ['bracket'],
+          message: 'is not a known spec ladder, e.g. shuffle-mage-fire',
+        });
         return z.NEVER;
       }
       if ((cls && cls !== ladderClass) || (spec && spec !== ladderSpec)) {
