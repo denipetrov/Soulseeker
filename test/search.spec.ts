@@ -172,9 +172,28 @@ describe('GET /search/suggestions', () => {
     ]);
   });
 
-  it('treats regex characters in the query literally', async () => {
-    const { status, body } = await suggestions('pvp', 'b.*');
+  it('refuses what a name cannot contain, as a 400 and never a 500', async () => {
+    // A NUL byte reached MongoDB as part of the regex and failed there, a 500.
+    for (const q of ['bi\u0000ba', 'b.*', '(a+)+$', '<script>', 'bi‮ba']) {
+      const { status, body } = await suggestions('pvp', q);
 
+      expect(status, JSON.stringify(q)).toBe(400);
+      expect(JSON.stringify(body)).not.toContain('script>');
+    }
+  });
+
+  it('refuses operator objects in the query string', async () => {
+    const response = await fetch(`${app.url}/search/suggestions?type=pvp&q[$ne]=x`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('still matches allowed punctuation literally, as part of a name', async () => {
+    const { status, body } = await suggestions('pvp', 'bi*');
+
+    // `*` is a character some names have, not a wildcard: nothing starts with "bi*".
     expect(status).toBe(200);
     expect(body.characters).toEqual([]);
   });

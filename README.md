@@ -78,6 +78,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /session` | token | Who the token says the caller is |
 | `GET /search/suggestions?type=pvp&q=…` (or `type=pve`) | token | Name suggestions as the visitor types: PvP characters, or Mythic+ characters and guilds; accent- and case-insensitive |
 | `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | token | A PvP ladder page: live ratings enriched from `characters`, or a finished season's archive; optional `class`/`spec` for the current season |
+| `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20` | token | Which specs are played at or above a rating on one day; `getEarliestDate=true` adds the first day with data |
 | `GET /health` | none | Liveness: process only |
 | `GET /health/ready` | none | Readiness: 503 if MongoDB or Redis is down; upstreams only degrade it |
 
