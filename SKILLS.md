@@ -378,3 +378,13 @@ placeholders, as in Rankwarden.
 - **One configuration per test file**: `ConfigModule` reads the environment once per
   module graph, and the harness refuses a second boot with different settings.
 - `resetRedis(app)` clears the file's keys between tests.
+- **CI's `test` job runs on `ubuntu-22.04`, not `ubuntu-latest`.** MongoDB 8.x refuses
+  to start on Linux kernels 6.19 to 7.0.13 (SERVER-121912, a clash with its bundled
+  TCMalloc). The ubuntu-24.04 image moved into that range on 2026-10-18, while 22.04 is
+  on 6.8.
+  - The job prints `uname -r` first, so a kernel change shows up on a green run before
+    it breaks one.
+  - Return to `ubuntu-latest` once MongoDB ships a fix or the runners reach 7.0.14+.
+  - Same fix as Rankwarden's CI (83825fd).
+  - The same limit applies to a local Docker VM. This machine's WSL2 kernel is 6.18,
+    just below the range, so a WSL kernel update could stop the local MongoDB.
