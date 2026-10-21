@@ -15,6 +15,29 @@ export function isRegion(value: string): value is Region {
   return (REGIONS as readonly string[]).includes(value);
 }
 
+/**
+ * The languages the Profile API answers in. Any of them works on any region's
+ * host; the front end picks the visitor's.
+ */
+export const LOCALES = [
+  'en_US',
+  'es_MX',
+  'pt_BR',
+  'en_GB',
+  'es_ES',
+  'fr_FR',
+  'ru_RU',
+  'de_DE',
+  'pt_PT',
+  'it_IT',
+  'ko_KR',
+  'zh_TW',
+] as const;
+export type Locale = (typeof LOCALES)[number];
+
+/** The locale names are parsed in and Rankwarden stores them in. */
+export const DEFAULT_LOCALE: Locale = 'en_US';
+
 /** Host for a region's API, from `BLIZZARD_API_HOST_TEMPLATE`, e.g. https://us.api.blizzard.com */
 export function apiHost(region: Region, template: string): string {
   return template.replaceAll('{region}', region);

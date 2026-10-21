@@ -19,6 +19,8 @@ export const pvpBracketSchema = z.object({
   season: z.object({ id: z.number().int() }).optional(),
   season_match_statistics: matchStatistics.optional(),
   weekly_match_statistics: matchStatistics.optional(),
+  // Solo Shuffle and Blitz only: the spec the ladder is for.
+  specialization: z.object({ id: z.number().int(), name: z.string() }).optional(),
 });
 
 export type PvpBracketPayload = z.infer<typeof pvpBracketSchema>;

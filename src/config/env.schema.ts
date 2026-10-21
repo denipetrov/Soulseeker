@@ -242,6 +242,26 @@ export const envSchema = z.object({
     'profile/wow/character/{realmSlug}/{characterName}/pvp-bracket/{bracket}',
     ['realmSlug', 'characterName', 'bracket'],
   ),
+  BLIZZARD_PATH_CHARACTER_MEDIA: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/character-media',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_PVP_SUMMARY: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/pvp-summary',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_STATISTICS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/statistics',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_EQUIPMENT: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/equipment',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_ACHIEVEMENTS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/achievements',
+    ['realmSlug', 'characterName'],
+  ),
   /**
    * Short, because a person is waiting on the answer: a lookup that takes
    * longer than this is better served stale from Mongo than late.
@@ -322,6 +342,18 @@ export const envSchema = z.object({
   PVP_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
   /** How long one leaderboard page is reused. Rankwarden rewrites the ladders hourly. */
   LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(60),
+  /**
+   * How long a PvP character page is served without asking Blizzard again. One
+   * page costs about 13 Blizzard requests, so this is long on purpose.
+   */
+  PVP_CHARACTER_CACHE_TTL_SECONDS: positiveInt(21_600),
+  /**
+   * How long an expired page is kept past its TTL, to be served marked stale
+   * when the Blizzard budget is spent.
+   */
+  PVP_CHARACTER_STALE_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one character. */
+  PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
 });
 
 const validatedEnvSchema = envSchema.superRefine((env, ctx) => {

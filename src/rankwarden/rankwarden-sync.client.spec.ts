@@ -16,7 +16,7 @@ const CHARACTER: CharacterSyncInput = {
   realmId: 61,
   realmSlug: 'emerald-dream',
   faction: 'HORDE',
-  brackets: { '3v3': { rank: 119, rating: 2093, played: 10, won: 5, lost: 5 } },
+  brackets: { '3v3': { rating: 2093, played: 10, won: 5, lost: 5 } },
 };
 
 let server: Server | null = null;

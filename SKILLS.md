@@ -273,6 +273,61 @@ The response and its fields:
   enriched the character. A class filter there leaves the others out, and today every
   EU 3v3 row is unenriched, so `class=` returns nothing for EU.
 
+### PvP character
+
+`GET /pvp/character?region=&realmSlug=&characterName=[&locale=en_US][&forceRefresh=true]`
+(`src/pvp/character/`). One character, from Blizzard's Profile API.
+
+- **Parameters.** Region, realm slug and name are all required. The name is NFC-normalised
+  and lowercased, letters only, 2–12 of them. `locale` is one of `LOCALES`
+  (`blizzard.constants.ts`) and defaults to `en_US`.
+- **Blizzard calls.** A full page costs 7 + one per ladder (~13):
+  - `core`, the same in every language, always read in `en_US`: character-media,
+    pvp-summary, one pvp-bracket per ladder it lists, statistics and achievements;
+  - `localized`, per language: profile, specializations and equipment.
+  - pvp-summary lists exactly the ladders played this season, per-spec Shuffle and Blitz
+    included, so nothing is spent on ladders the character never played.
+- **Cache.** The two parts are cached apart, `pvp:character:<region>:<realm>:<name>:core`
+  and `…:locale:<locale>`, so a second language costs 3 requests.
+  - A part is fresh for `PVP_CHARACTER_CACHE_TTL_SECONDS` (6 h), judged by its own
+    `fetchedAt`. Redis keeps it `PVP_CHARACTER_STALE_SECONDS` (24 h) longer.
+  - There is a single flight per part on each replica.
+  - `forceRefresh` claims `pvp:character:refresh:<id>` with `SET NX EX`
+    (`PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS`, 300). While the claim is held, it is
+    ignored and the cache answers. Without Redis it is refused.
+- **Failures.**
+  - A profile 404 is a 404. Any other part's 404 makes that part null.
+  - Any other failure fails the load, so a page is never cached with a gap. The kept
+    copy is then served with `stale: true` if both parts exist. Otherwise a spent budget
+    is a 503 with `Retry-After: 60`, and anything else a 502.
+- **Payload sizes.** Achievements (~2 MB) are cut down to the PvP history before caching.
+  Specializations (~500 KB) keep only each spec's active loadout and PvP talents.
+  Equipped items keep only `item`, `slot`, `name`, `media`, `bonus_list`, `enchantments`,
+  `sockets`, `set` and `transmog`: stats, armor, prices and requirements are dropped.
+  Blizzard's API links (`_links`, `key.href`) are stripped everywhere. On a real
+  character, `core` is ~45 KB and `localized` ~90 KB (equipment ~14 KB).
+- **Statistics.** Avoidance and speed have no `value`, so their `rating_bonus` stands in.
+- **PvP history** (`pvp-history.ts`) is parsed from English names, account-wide:
+  - **Tiers.** `<Tier>[ I| II]: [<Expansion> ]Season <N>`, where the tier is Combatant,
+    Challenger, Rival, Duelist, Elite, Gladiator, Legend, Strategist or Battle Mender.
+    This covers Warlords to now and `Challenger: Season 14`.
+  - **Rank 1.** Recognised by the achievement ids in Rankwarden's season rewards, which
+    give the season and ladder. One id shared by several spec ladders stands for the
+    family (`shuffle`). For seasons Rankwarden lacks, recognised by name: `<Prefix>
+    Gladiator|Legend: …`, `Hero of the Alliance|Horde: <Prefix>`.
+  - **`seasonId`.** For a tier, the Rankwarden season whose start is the latest before
+    `completed_timestamp`; null before season 27.
+  - **`earnedByThisCharacter`** is `criteria.is_completed`. Other entries were earned by
+    another character on the account.
+  - Look-alikes such as `Scholomance Challenger`, `Challenge Warlord: Gold` and
+    `Cruel Elite` are ignored.
+- **Sync.** Only when `core` was fetched fresh, and on the next tick after the response:
+  - Every ladder from pvp-summary goes in `brackets`, without `rank`.
+  - The profile goes too, but only for `en_US`, so Rankwarden never stores translated
+    names. Its fields are mapped as Rankwarden's enrichment maps them: `gender.type`,
+    `realm.name`, `active_title.display_string`.
+  - A character with no rating this season is not pushed.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
@@ -284,6 +339,8 @@ The response and its fields:
   `withRunId(RunKind.Sync, …)` for log correlation.
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
+- PvP brackets carry no `rank`: only the leaderboard has one, and Rankwarden keeps what its
+  sweep stored.
 
 ### Spec representation
 

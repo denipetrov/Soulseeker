@@ -23,27 +23,45 @@ export const characterProfileSchema = z.object({
 });
 
 /**
+ * One selected talent: `{ id, rank, tooltip? }`. The tooltip — talent, spell,
+ * description, cast time — is kept as Blizzard shapes it, in the requested
+ * language, for the front end to render.
+ */
+const selectedTalent = z.looseObject({ id: z.number().int(), rank: z.number().int() });
+
+/** A PvP talent slot; `selected` is absent for an empty or locked slot. */
+const pvpTalentSlot = z.looseObject({
+  slot_number: z.number().int(),
+  selected: z.looseObject({ talent: namedRef }).optional(),
+});
+
+/**
  * GET /profile/wow/character/{realmSlug}/{characterName}/specializations
  *
  * `active_hero_talent_tree` is the tree on the active loadout — verified to
  * match `loadouts[is_active].selected_hero_talent_tree`, so the deep loadout
  * walk is unnecessary.
+ *
+ * The payload is ~500 KB: every saved loadout of every spec, each with a full
+ * tooltip per talent. Callers keep only each spec's active loadout.
  */
 export const characterSpecializationsSchema = z.object({
   active_specialization: namedRef.optional(),
   active_hero_talent_tree: namedRef.optional(),
-  // Only the fields we keep; zod drops the rest of the payload, which carries a
-  // full talent tree with tooltips for every loadout.
   specializations: z
     .array(
       z.object({
         specialization: namedRef,
+        pvp_talent_slots: z.array(pvpTalentSlot).optional(),
         loadouts: z
           .array(
             z.object({
               is_active: z.boolean(),
               talent_loadout_code: z.string().optional(),
               selected_hero_talent_tree: namedRef.optional(),
+              selected_class_talents: z.array(selectedTalent).optional(),
+              selected_spec_talents: z.array(selectedTalent).optional(),
+              selected_hero_talents: z.array(selectedTalent).optional(),
             }),
           )
           .optional(),
