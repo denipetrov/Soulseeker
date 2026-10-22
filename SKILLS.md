@@ -328,6 +328,26 @@ The response and its fields:
     `realm.name`, `active_title.display_string`.
   - A character with no rating this season is not pushed.
 
+### PvE catalogue
+
+`PveCatalogue` (`src/seasons/pve-catalogue.service.ts`, exported by `SeasonsModule`) holds
+every raid and Mythic+ season Rankwarden catalogues, for the PvE character lookups.
+
+- **What it keeps.** From `raids`, each raid's `slug`, `name` and `encounters`
+  (`id`, `slug`, `name`, in boss order). From `mplus_seasons`, each season's `slug`, `name`
+  and `dungeonIds`. A projection keeps raid rankings, cutoffs and archive progress from
+  ever being read.
+- **Order.** Newest expansion first, then the latest to open within it, by the earliest
+  regional start. Unlisted entries are kept, since a character's history may name them.
+- **In memory, per replica.** It is read at startup (`onApplicationBootstrap`), then again
+  on the first call after `PVE_CATALOGUE_TTL_SECONDS` (a day). There is a single flight
+  per replica.
+  - A failed reload keeps the last catalogue and is retried on the next call.
+  - A failure at startup is logged and does not stop the boot. Only a replica that has
+    never read the catalogue fails a call.
+- **API.** `catalogue()`, `raids()`, `mplusSeasons()`, `raidSlugs()`,
+  `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:

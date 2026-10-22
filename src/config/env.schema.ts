@@ -352,6 +352,11 @@ export const envSchema = z.object({
    * when the Blizzard budget is spent.
    */
   PVP_CHARACTER_STALE_SECONDS: positiveInt(86_400),
+  /**
+   * How long the raid and Mythic+ season catalogue is held in memory before it
+   * is read again. Rankwarden re-reads both once a day.
+   */
+  PVE_CATALOGUE_TTL_SECONDS: positiveInt(86_400),
   /** The shortest gap between two `forceRefresh` lookups of one character. */
   PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
 });
