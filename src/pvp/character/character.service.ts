@@ -1,36 +1,20 @@
-import {
-  BadGatewayException,
-  Injectable,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { BadGatewayException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RunLogger, withRunId } from '@denipetrov/spirit-link/logging';
 
 import { RunKind } from '../../common/logging/run-kind.js';
+import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { budgetErrorOf } from '../../common/quota/request-budget.js';
 import { describeError } from '../../common/utils/errors.js';
+import { SingleFlight } from '../../common/utils/single-flight.js';
 import type { Env } from '../../config/env.schema.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
-import { RedisService } from '../../redis/redis.service.js';
+import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
 import { CharacterLoader, type CharacterRef } from './character.loader.js';
 import { responseOf, syncPayloadOf } from './character.mapper.js';
 import type { CorePart, LocalizedPart, PvpCharacterResponse } from './character.types.js';
 import type { CharacterQuery } from './dto/character-query.dto.js';
-
-/**
- * How long a client should wait after a 503. Blizzard's hour is counted in
- * one-minute buckets, so a minute frees the oldest of them.
- */
-export const BUDGET_RETRY_AFTER_SECONDS = 60;
-
-/** A 503 that knows its Retry-After. */
-export class BudgetSpentException extends ServiceUnavailableException {
-  constructor(readonly retryAfterSeconds = BUDGET_RETRY_AFTER_SECONDS) {
-    super('The Blizzard request budget is spent and this character is not cached; retry later.');
-  }
-}
 
 /**
  * PvP character pages, from Blizzard through Redis.
@@ -56,13 +40,13 @@ export class PvpCharacterService {
   private readonly ttlMs: number;
   private readonly keepSeconds: number;
   private readonly cooldownSeconds: number;
-  /** In-process single flight: one Blizzard load per part at a time on this replica. */
-  private readonly inFlight = new Map<string, Promise<unknown>>();
+  /** One Blizzard load per part at a time on this replica. */
+  private readonly flights = new SingleFlight();
 
   constructor(
     private readonly loader: CharacterLoader,
     private readonly cache: CacheService,
-    private readonly redis: RedisService,
+    private readonly cooldown: RefreshCooldown,
     private readonly sync: RankwardenSyncClient,
     config: ConfigService<Env, true>,
   ) {
@@ -87,7 +71,9 @@ export class PvpCharacterService {
       localizedKey,
     ])) as [CorePart | null, LocalizedPart | null];
 
-    const forced = query.forceRefresh && (await this.claimRefresh(id));
+    const forced =
+      query.forceRefresh &&
+      (await this.cooldown.claim(`pvp:character:${id}`, this.cooldownSeconds));
     const needCore = forced || !this.isFresh(cachedCore);
     const needLocalized = forced || !this.isFresh(cachedLocalized);
 
@@ -100,9 +86,9 @@ export class PvpCharacterService {
 
     try {
       [core, localized] = await Promise.all([
-        needCore ? this.once(coreKey, () => this.loader.core(ref)) : cachedCore!,
+        needCore ? this.flights.run(coreKey, () => this.loader.core(ref)) : cachedCore!,
         needLocalized
-          ? this.once(localizedKey, () => this.loader.localized(ref, query.locale))
+          ? this.flights.run(localizedKey, () => this.loader.localized(ref, query.locale))
           : cachedLocalized,
       ]);
     } catch (error) {
@@ -126,36 +112,6 @@ export class PvpCharacterService {
   }
 
   /**
-   * Whether a forced refresh may go to Blizzard now: once per character per
-   * cooldown, across replicas. Fails closed — without Redis the budget could
-   * not be charged anyway.
-   */
-  private async claimRefresh(id: string): Promise<boolean> {
-    try {
-      const claimed = await this.redis.client.set(
-        this.redis.key('pvp', 'character', 'refresh', id),
-        '1',
-        { condition: 'NX', expiration: { type: 'EX', value: this.cooldownSeconds } },
-      );
-
-      return claimed === 'OK';
-    } catch (error) {
-      this.logger.warn(`Refresh cooldown unavailable: ${describeError(error)}`);
-      return false;
-    }
-  }
-
-  private once<T>(key: string, load: () => Promise<T>): Promise<T> {
-    const pending = this.inFlight.get(key) as Promise<T> | undefined;
-    if (pending) return pending;
-
-    const started = load().finally(() => this.inFlight.delete(key));
-    this.inFlight.set(key, started);
-
-    return started;
-  }
-
-  /**
    * Blizzard could not be asked: the expired page if both parts are still
    * kept, otherwise 503 for a spent budget and 502 for anything else.
    */
@@ -175,7 +131,7 @@ export class PvpCharacterService {
 
     if (spent) {
       this.logger.warn(`No page for ${id}: ${spent.message}`);
-      throw new BudgetSpentException();
+      throw new BudgetSpentException('Blizzard');
     }
 
     this.logger.warn(`Blizzard lookup of ${id} failed: ${describeError(error)}`);

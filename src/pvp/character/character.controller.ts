@@ -16,7 +16,8 @@ import type { Response } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { BEARER_AUTH } from '../../docs/swagger.js';
 import { ApiZodQuery } from '../../docs/zod-openapi.js';
-import { BudgetSpentException, PvpCharacterService } from './character.service.js';
+import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
+import { PvpCharacterService } from './character.service.js';
 import type { PvpCharacterResponse } from './character.types.js';
 import { characterQuerySchema, type CharacterQuery } from './dto/character-query.dto.js';
 

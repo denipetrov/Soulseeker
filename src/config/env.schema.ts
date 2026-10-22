@@ -353,6 +353,15 @@ export const envSchema = z.object({
    */
   PVP_CHARACTER_STALE_SECONDS: positiveInt(86_400),
   /**
+   * How long a PvE character page is served without asking Raider.io again. One
+   * lookup is one Raider.io request, so this is shorter than the PvP page's.
+   */
+  PVE_CHARACTER_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long an expired PvE page is kept past its TTL, to be served stale. */
+  PVE_CHARACTER_STALE_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one PvE character. */
+  PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
+  /**
    * How long the raid and Mythic+ season catalogue is held in memory before it
    * is read again. Rankwarden re-reads both once a day.
    */

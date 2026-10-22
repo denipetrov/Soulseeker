@@ -292,7 +292,7 @@ The response and its fields:
   - A part is fresh for `PVP_CHARACTER_CACHE_TTL_SECONDS` (6 h), judged by its own
     `fetchedAt`. Redis keeps it `PVP_CHARACTER_STALE_SECONDS` (24 h) longer.
   - There is a single flight per part on each replica.
-  - `forceRefresh` claims `pvp:character:refresh:<id>` with `SET NX EX`
+  - `forceRefresh` claims `refresh:pvp:character:<id>` (`RefreshCooldown`) with `SET NX EX`
     (`PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS`, 300). While the claim is held, it is
     ignored and the cache answers. Without Redis it is refused.
 - **Failures.**
@@ -327,6 +327,57 @@ The response and its fields:
     names. Its fields are mapped as Rankwarden's enrichment maps them: `gender.type`,
     `realm.name`, `active_title.display_string`.
   - A character with no rating this season is not pushed.
+
+### PvE character
+
+`GET /pve/character?region=&realmSlug=&characterName=[&raidProgression=][&mplusSeasonScore=][&forceRefresh=true]`
+(`src/pve/character/`). One character, from Raider.io's `characters/profile`.
+
+- **Parameters.** Region (`cn` too), realm slug and name are required, with the same rules as
+  PvP (`src/characters/dto/character-identity.ts`). There is no locale: Raider.io answers in
+  English and the front end translates.
+  - `raidProgression` must be a raid and `mplusSeasonScore` a season in the `PveCatalogue`.
+    Otherwise the answer is a 400, and Raider.io is not asked.
+- **What is asked for.** Each answer is one Raider.io request, for the fields of the parts it
+  is missing:
+  - **Whole page**, when neither parameter is given: `gear`, `talents:categorized`, `guild`,
+    `raid_progression:current-expansion`, `mythic_plus_scores_by_season:current`,
+    `mythic_plus_ranks` and `mythic_plus_best_runs:all`.
+  - **`raidProgression=<slug>`**: `raid_progression:<slug>` and `raid_achievement_curve:<slug>`.
+  - **`mplusSeasonScore=<slug>`**: `mythic_plus_scores_by_season:<slug>`.
+  - Both parameters may be given together.
+- **What is kept.**
+  - Every answer has the base profile: name, race, class, active spec, gender, faction,
+    realm (its display name), region and thumbnail.
+  - Gear: `item_level_equipped`, and per slot `item_id`, `item_level`, `name`, `icon`,
+    `bonuses`, `enchants_detail` and `gems_detail`.
+  - Talents: the whole `talentLoadout` (~34 KB). Guild: its name.
+  - Raids: everything Raider.io returns, keyed by raid slug. The curve is
+    `[{ raid, aotc?, cutting_edge? }]`, and empty when neither was earned.
+  - Scores: `season` and `scores` (the colour `segments` are dropped). Ranks: everything.
+  - Best runs drop `keystone_run_id`, `map_challenge_mode_id`, `par_time_ms`, `short_name`,
+    `zone_expansion_id` and `zone_id`. Affixes keep only `id`, `icon_url` and `wowhead_url`;
+    the rest is in `mplus_affixes`. The spec keeps only its `id`.
+  - A real whole page is ~45 KB.
+- **Cache.** One entry per part: `pve:character:<region>:<realm>:<name>:full`, `…:raid:<slug>`
+  and `…:season:<slug>`. A widget never pays for the page, nor the page for a widget.
+  - A part is fresh for `PVE_CHARACTER_CACHE_TTL_SECONDS` (1 h) and kept
+    `PVE_CHARACTER_STALE_SECONDS` (24 h) longer.
+  - `forceRefresh` goes through `RefreshCooldown` (`refresh:pve:character:<id>`,
+    `PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS`).
+  - There is a single flight per field set on each replica.
+- **Failures.** Raider.io's 400 ("no such character") is a 404. Otherwise, as for PvP: stale
+  if every part asked for is kept, else 503 with `Retry-After: 60` for a spent budget and 502
+  for anything else.
+- **Sync.** After a fresh whole page only, and on the next tick, the current season's best
+  runs go to `POST /mplus/characters/sync`:
+  - The dungeon is `zone_id`, the name, the slug from the run's url and `short_name`.
+  - `timeRemainingMs` is `par_time_ms − clear_time_ms`.
+  - Runs whose dungeon is not in the season's `dungeonIds` (from the catalogue) are left
+    out, since one of them makes Rankwarden refuse the whole request.
+  - The profile sends class, spec, race and role. The base profile's `HEALING` / `TANK` /
+    `DPS` is spelled `healer` / `tank` / `dps`, as runs and Rankwarden spell it.
+  - Nothing is pushed without a run in the season.
 
 ### PvE catalogue
 
