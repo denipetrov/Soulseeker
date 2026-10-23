@@ -1,4 +1,8 @@
 import { DEFAULT_LOCALE, type Locale, type Region } from '../../blizzard/blizzard.constants.js';
+import {
+  statisticsById,
+  type CharacterAchievementStatisticsPayload,
+} from '../../blizzard/schemas/character-achievement-statistics.schema.js';
 import type { CharacterEquipmentPayload } from '../../blizzard/schemas/character-equipment.schema.js';
 import type { CharacterMediaPayload } from '../../blizzard/schemas/character-media.schema.js';
 import type {
@@ -12,6 +16,7 @@ import type { CharacterSyncInput } from '../../rankwarden/dto/character-sync.dto
 import type { Faction } from '../seasons/pvp-season.types.js';
 import type {
   CorePart,
+  HighestRatings,
   LocalizedPart,
   PvpCharacterResponse,
   PvpCharacterSpecializations,
@@ -63,6 +68,7 @@ function statisticsOf(payload: CharacterStatisticsPayload): PvpCharacterStatisti
     mastery: ratedStat(payload.mastery),
     meleeCrit: ratedStat(payload.melee_crit),
     meleeHaste: ratedStat(payload.melee_haste),
+    versatility: payload.versatility ?? null,
     versatilityDamageDoneBonus: payload.versatility_damage_done_bonus ?? null,
   };
 }
@@ -95,11 +101,33 @@ function specializationsOf(payload: CharacterSpecializationsPayload): PvpCharact
   };
 }
 
+/**
+ * Achievement statistic ids of the highest personal ratings. Ids, not names:
+ * they are the same in every language.
+ */
+export const HIGHEST_RATING_STATISTICS = { '2v2': 370, '3v3': 595, '5v5': 596 } as const;
+
+export function highestRatingsOf(payload: CharacterAchievementStatisticsPayload): HighestRatings {
+  const quantities = statisticsById(payload);
+  const rating = (id: number) => {
+    const value = quantities.get(id);
+    // Blizzard reports a rating never reached as 0, and its team ratings as 2^32 - 2.
+    return value !== undefined && value > 0 && value < 10_000 ? value : null;
+  };
+
+  return {
+    '2v2': rating(HIGHEST_RATING_STATISTICS['2v2']),
+    '3v3': rating(HIGHEST_RATING_STATISTICS['3v3']),
+    '5v5': rating(HIGHEST_RATING_STATISTICS['5v5']),
+  };
+}
+
 export interface CoreFetch {
   media: CharacterMediaPayload | null;
   summary: PvpSummaryPayload | null;
   brackets: { bracket: string; payload: PvpBracketPayload }[];
   statistics: CharacterStatisticsPayload | null;
+  achievementStatistics: CharacterAchievementStatisticsPayload | null;
   pvpHistory: PvpHistoryEntry[];
 }
 
@@ -118,6 +146,8 @@ export function corePartOf(fetched: CoreFetch, fetchedAt: Date): CorePart {
       won: payload.season_match_statistics?.won ?? 0,
       lost: payload.season_match_statistics?.lost ?? 0,
       specialization: payload.specialization ?? null,
+      rounds: payload.season_round_statistics ?? null,
+      rank: null,
     })),
     honor: fetched.summary
       ? {
@@ -126,6 +156,9 @@ export function corePartOf(fetched: CoreFetch, fetchedAt: Date): CorePart {
         }
       : null,
     statistics: fetched.statistics ? statisticsOf(fetched.statistics) : null,
+    highestRatings: fetched.achievementStatistics
+      ? highestRatingsOf(fetched.achievementStatistics)
+      : null,
     pvpHistory: fetched.pvpHistory,
   };
 }
@@ -199,6 +232,8 @@ export function responseOf(
     honor: core.honor,
     specializations: localized.specializations,
     statistics: core.statistics,
+    // Cached before highest ratings were collected: absent until the part is refetched.
+    highestRatings: core.highestRatings ?? null,
     equipment: localized.equipment,
     pvpHistory: core.pvpHistory,
     fetchedAt: core.fetchedAt < localized.fetchedAt ? core.fetchedAt : localized.fetchedAt,
@@ -234,10 +269,22 @@ export function syncPayloadOf(
     realmSlug: profile.realm.slug,
     faction: profile.faction?.toUpperCase() ?? null,
     brackets: Object.fromEntries(
-      core.brackets.map((entry) => [
-        entry.bracket,
-        { rating: entry.rating, played: entry.played, won: entry.won, lost: entry.lost, fetchedAt },
-      ]),
+      core.brackets.map((entry) => {
+        // Rankwarden's sweep stores what Blizzard's leaderboard counts, which for
+        // Solo Shuffle is rounds, not matches: sending matches would undo it.
+        const record = entry.rounds ?? entry;
+
+        return [
+          entry.bracket,
+          {
+            rating: entry.rating,
+            played: record.played,
+            won: record.won,
+            lost: record.lost,
+            fetchedAt,
+          },
+        ];
+      }),
     ),
   };
 

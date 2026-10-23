@@ -58,6 +58,8 @@ const EXAMPLE: PvpCharacterResponse = {
       won: 28,
       lost: 1,
       specialization: { id: 65, name: 'Holy' },
+      rounds: { played: 160, won: 95, lost: 65 },
+      rank: 412,
     },
   ],
   honor: { level: 1991, honorableKills: 10516 },
@@ -87,10 +89,19 @@ const EXAMPLE: PvpCharacterResponse = {
     mastery: { value: 64.89, rating: 1208 },
     meleeCrit: { value: 11.63, rating: 121 },
     meleeHaste: { value: 0, rating: 0 },
+    versatility: 1281,
     versatilityDamageDoneBonus: 23.72,
   },
+  highestRatings: { '2v2': 2923, '3v3': 3486, '5v5': null },
   equipment: {
-    items: [{ item: { id: 271465 }, slot: { type: 'HEAD', name: 'Head' } }],
+    items: [
+      {
+        item: { id: 271465 },
+        slot: { type: 'HEAD', name: 'Head' },
+        level: { value: 308, display_string: 'Item Level 308' },
+        quality: { type: 'EPIC', name: 'Epic' },
+      },
+    ],
     sets: [{ item_set: { id: 1458, name: "Gladiator's Distinction" } }],
   },
   pvpHistory: [

@@ -7,7 +7,10 @@ import { BudgetSpentException } from '../../common/quota/budget-spent.exception.
 import { budgetErrorOf } from '../../common/quota/request-budget.js';
 import { describeError } from '../../common/utils/errors.js';
 import { SingleFlight } from '../../common/utils/single-flight.js';
+import type { CharacterDocument } from '../../characters/entities/character.entity.js';
 import type { Env } from '../../config/env.schema.js';
+import { Collections } from '../../database/collections.js';
+import { MongoService } from '../../database/mongo.service.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
@@ -48,6 +51,7 @@ export class PvpCharacterService {
     private readonly cache: CacheService,
     private readonly cooldown: RefreshCooldown,
     private readonly sync: RankwardenSyncClient,
+    private readonly mongo: MongoService,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVP_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -57,6 +61,49 @@ export class PvpCharacterService {
   }
 
   async character(query: CharacterQuery): Promise<PvpCharacterResponse> {
+    return this.withRanks(await this.page(query));
+  }
+
+  /**
+   * Each ladder's rank, as Rankwarden's last sweep recorded it. Blizzard's
+   * per-ladder endpoint has none, and ranks move every hour, so they are read
+   * from MongoDB on every answer rather than cached: one indexed lookup by
+   * `character_identity`. A failed read leaves them null instead of failing
+   * the page.
+   */
+  private async withRanks(response: PvpCharacterResponse): Promise<PvpCharacterResponse> {
+    if (response.seasonId === null || response.brackets.length === 0) return response;
+
+    let stored: Pick<CharacterDocument, 'brackets'> | null;
+    try {
+      stored = await this.mongo.collection<CharacterDocument>(Collections.Characters).findOne(
+        {
+          seasonId: response.seasonId,
+          region: response.region,
+          characterId: response.character.id,
+        },
+        {
+          projection: Object.fromEntries([
+            ['_id', 0],
+            ...response.brackets.map(({ bracket }) => [`brackets.${bracket}.rank`, 1]),
+          ]),
+        },
+      );
+    } catch (error) {
+      this.logger.warn(`Ranks of ${response.character.name} not read: ${describeError(error)}`);
+      return response;
+    }
+
+    return {
+      ...response,
+      brackets: response.brackets.map((entry) => ({
+        ...entry,
+        rank: stored?.brackets?.[entry.bracket]?.rank ?? null,
+      })),
+    };
+  }
+
+  private async page(query: CharacterQuery): Promise<PvpCharacterResponse> {
     const ref: CharacterRef = {
       region: query.region,
       realmSlug: query.realmSlug,

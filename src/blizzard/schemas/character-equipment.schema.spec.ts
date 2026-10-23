@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { characterEquipmentSchema } from './character-equipment.schema.js';
 
 describe('characterEquipmentSchema', () => {
-  it('keeps only what the page renders of each item', () => {
+  it('keeps only what the page renders of each item, embellishments included', () => {
     const transmog = {
       item: { id: 194748, name: 'Split-Lens Specs' },
       display_string: 'Transmogrified to:\nSplit-Lens Specs',
@@ -27,6 +27,10 @@ describe('characterEquipmentSchema', () => {
           sell_price: { value: 434957 },
           requirements: { level: { value: 90 } },
           durability: { value: 93 },
+          level: { value: 308, display_string: 'Item Level 308' },
+          limit_category: 'Unique-Equipped: Embellished (2)',
+          spells: [{ spell: { id: 1283697, name: 'Arcanoweave Lining' }, description: 'Equip: …' }],
+          modified_crafting_stat: [{ id: 36 }],
         },
       ],
     });
@@ -35,13 +39,24 @@ describe('characterEquipmentSchema', () => {
       'bonus_list',
       'enchantments',
       'item',
+      'level',
+      'limit_category',
       'media',
       'name',
+      'quality',
       'set',
       'slot',
       'sockets',
+      'spells',
       'transmog',
     ]);
-    expect(parsed.equipped_items[0]).toMatchObject({ item: { id: 271465 }, transmog });
+    expect(parsed.equipped_items[0]).toMatchObject({
+      item: { id: 271465 },
+      transmog,
+      level: { value: 308 },
+      quality: { type: 'EPIC' },
+      limit_category: 'Unique-Equipped: Embellished (2)',
+      spells: [{ spell: { id: 1283697, name: 'Arcanoweave Lining' } }],
+    });
   });
 });

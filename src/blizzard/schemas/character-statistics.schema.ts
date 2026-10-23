@@ -19,6 +19,8 @@ export const characterStatisticsSchema = z.object({
   mastery: ratedStat.optional(),
   melee_crit: ratedStat.optional(),
   melee_haste: ratedStat.optional(),
+  /** The versatility rating; its effects are the three `versatility_*_bonus` percentages. */
+  versatility: z.number().optional(),
   versatility_damage_done_bonus: z.number().optional(),
 });
 

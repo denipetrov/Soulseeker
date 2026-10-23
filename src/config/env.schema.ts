@@ -262,6 +262,10 @@ export const envSchema = z.object({
     'profile/wow/character/{realmSlug}/{characterName}/achievements',
     ['realmSlug', 'characterName'],
   ),
+  BLIZZARD_PATH_CHARACTER_ACHIEVEMENT_STATISTICS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/achievements/statistics',
+    ['realmSlug', 'characterName'],
+  ),
   /**
    * Short, because a person is waiting on the answer: a lookup that takes
    * longer than this is better served stale from Mongo than late.

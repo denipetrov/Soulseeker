@@ -38,6 +38,7 @@ const CORE: CoreFetch = {
         rating: 2729,
         season: { id: 42 },
         season_match_statistics: { played: 29, won: 28, lost: 1 },
+        season_round_statistics: { played: 160, won: 95, lost: 65 },
         specialization: { id: 65, name: 'Holy' },
       },
     },
@@ -45,7 +46,27 @@ const CORE: CoreFetch = {
   statistics: {
     speed: { rating_bonus: 8.5, rating_normalized: 98 },
     mastery: { value: 64.9, rating_bonus: 39.4, rating_normalized: 1208 },
+    versatility: 1281,
     versatility_damage_done_bonus: 23.7,
+  },
+  // As Blizzard nests them: ids 370 / 595 / 596 are the highest 2v2 / 3v3 / 5v5 ratings.
+  achievementStatistics: {
+    categories: [
+      {
+        statistics: [{ id: 1, quantity: 5 }],
+        sub_categories: [
+          {
+            statistics: [
+              { id: 370, quantity: 2923 },
+              { id: 595, quantity: 3486 },
+              { id: 596, quantity: 0 },
+              // A team rating never set, as Blizzard reports it.
+              { id: 374, quantity: 4294967294 },
+            ],
+          },
+        ],
+      },
+    ],
   },
   pvpHistory: [],
 };
@@ -139,8 +160,11 @@ describe('the response', () => {
         speed: { value: 8.5, rating: 98 },
         mastery: { value: 64.9, rating: 1208 },
         avoidance: null,
+        versatility: 1281,
         versatilityDamageDoneBonus: 23.7,
       },
+      // 5v5 never played (0); team ratings are never read.
+      highestRatings: { '2v2': 2923, '3v3': 3486, '5v5': null },
       stale: false,
     });
     expect(response.brackets[1]).toEqual({
@@ -150,7 +174,11 @@ describe('the response', () => {
       won: 28,
       lost: 1,
       specialization: { id: 65, name: 'Holy' },
+      rounds: { played: 160, won: 95, lost: 65 },
+      // Ranks are read from Rankwarden per answer, never cached.
+      rank: null,
     });
+    expect(response.brackets[0]).toMatchObject({ bracket: '3v3', rounds: null });
     expect(response.specializations?.specializations).toEqual([
       {
         specialization: { id: 65, name: 'Holy' },
@@ -214,6 +242,13 @@ describe('the Rankwarden sync payload', () => {
     });
     expect(Object.keys(payload!.brackets)).toEqual(['3v3', 'shuffle-paladin-holy']);
     expect(payload!.brackets['3v3']).not.toHaveProperty('rank');
+    expect(payload!.brackets['3v3']).toMatchObject({ played: 10, won: 6, lost: 4 });
+    // Solo Shuffle goes as rounds, which is what Rankwarden's sweep stores.
+    expect(payload!.brackets['shuffle-paladin-holy']).toMatchObject({
+      played: 160,
+      won: 95,
+      lost: 65,
+    });
   });
 
   it('leaves translated names out', () => {

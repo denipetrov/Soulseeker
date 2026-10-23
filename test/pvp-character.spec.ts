@@ -21,8 +21,8 @@ let token: string;
 const CHARACTER = '/blizzard/us/profile/wow/character/demon-soul/manongauz';
 const CORE_KEY = 'pvp:character:us:demon-soul:manongauz:core';
 const BRACKETS = ['3v3', 'shuffle-paladin-holy'];
-/** 4 core calls + one per bracket + 3 per language. */
-const FULL_LOOKUP = 4 + BRACKETS.length + 3;
+/** 5 core calls + one per bracket + 3 per language. */
+const FULL_LOOKUP = 5 + BRACKETS.length + 3;
 
 const ref = (id: number, name: string) => ({ id, name });
 
@@ -59,6 +59,7 @@ const PAYLOADS: Record<string, unknown> = {
     rating: 2729,
     season: { id: 42 },
     season_match_statistics: { played: 29, won: 28, lost: 1 },
+    season_round_statistics: { played: 174, won: 130, lost: 44 },
     specialization: ref(65, 'Holy'),
   },
   '/statistics': { mastery: { value: 64.9, rating_normalized: 1208 } },
@@ -72,6 +73,20 @@ const PAYLOADS: Record<string, unknown> = {
     ],
   },
   '/equipment': { equipped_items: [{ item: { id: 1 }, slot: { type: 'HEAD', name: 'Head' } }] },
+  '/achievements/statistics': {
+    categories: [
+      {
+        sub_categories: [
+          {
+            statistics: [
+              { id: 370, quantity: 2923 },
+              { id: 595, quantity: 3486 },
+            ],
+          },
+        ],
+      },
+    ],
+  },
   '/achievements': {
     achievements: [
       {
@@ -134,6 +149,15 @@ beforeAll(async () => {
     startsAt: new Date('2026-08-18T15:00:00Z'),
     endsAt: null,
   });
+  // Rankwarden's record of the character this season: the rank on 3v3 only.
+  await db.collection('characters').insertOne({
+    seasonId: 42,
+    region: 'us',
+    characterId: 203724421,
+    characterName: 'Manongauz',
+    realmSlug: 'demon-soul',
+    brackets: { '3v3': { rank: 119, rating: 2093, played: 10, won: 5, lost: 5 } },
+  });
   await db.collection('archive_seasons').insertOne({
     region: 'us',
     seasonId: 41,
@@ -191,7 +215,11 @@ describe('GET /pvp/character', () => {
       statistics: { mastery: { value: 64.9, rating: 1208 } },
       stale: false,
     });
-    expect(first.body.brackets.map((b: Json) => b.bracket)).toEqual(BRACKETS);
+    expect(first.body.brackets.map((b: Json) => [b.bracket, b.rank])).toEqual([
+      ['3v3', 119],
+      ['shuffle-paladin-holy', null],
+    ]);
+    expect(first.body.highestRatings).toEqual({ '2v2': 2923, '3v3': 3486, '5v5': null });
     expect(first.body.pvpHistory).toMatchObject([
       { achievementId: 61179, tier: 'rank-one', seasonId: 41, earnedByThisCharacter: false },
       { achievementId: 62929, tier: 'duelist', seasonId: 42, earnedByThisCharacter: true },
@@ -217,7 +245,8 @@ describe('GET /pvp/character', () => {
       faction: 'ALLIANCE',
       brackets: {
         '3v3': { rating: 2100, played: 10, won: 6, lost: 4 },
-        'shuffle-paladin-holy': { rating: 2729, played: 29, won: 28, lost: 1 },
+        // Rounds, as Rankwarden's sweep stores Solo Shuffle.
+        'shuffle-paladin-holy': { rating: 2729, played: 174, won: 130, lost: 44 },
       },
       profile: { class: ref(2, 'Paladin'), gender: 'FEMALE', realmName: 'Demon Soul' },
     });

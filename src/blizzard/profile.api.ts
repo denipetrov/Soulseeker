@@ -8,6 +8,10 @@ import type { Locale, Region } from './blizzard.constants.js';
 import { BlizzardApiError } from './http/blizzard-api.error.js';
 import { BlizzardHttpService } from './http/blizzard-http.service.js';
 import {
+  characterAchievementStatisticsSchema,
+  type CharacterAchievementStatisticsPayload,
+} from './schemas/character-achievement-statistics.schema.js';
+import {
   characterAchievementsSchema,
   type CharacterAchievementsPayload,
 } from './schemas/character-achievements.schema.js';
@@ -52,6 +56,7 @@ export class ProfileApi {
   private readonly statisticsPath: string;
   private readonly equipmentPath: string;
   private readonly achievementsPath: string;
+  private readonly achievementStatisticsPath: string;
 
   constructor(
     private readonly http: BlizzardHttpService,
@@ -67,6 +72,9 @@ export class ProfileApi {
     this.statisticsPath = config.get('BLIZZARD_PATH_CHARACTER_STATISTICS', { infer: true });
     this.equipmentPath = config.get('BLIZZARD_PATH_CHARACTER_EQUIPMENT', { infer: true });
     this.achievementsPath = config.get('BLIZZARD_PATH_CHARACTER_ACHIEVEMENTS', { infer: true });
+    this.achievementStatisticsPath = config.get('BLIZZARD_PATH_CHARACTER_ACHIEVEMENT_STATISTICS', {
+      infer: true,
+    });
   }
 
   /**
@@ -198,6 +206,20 @@ export class ProfileApi {
       region,
       this.path(this.achievementsPath, realmSlug, characterName),
       characterAchievementsSchema.parse,
+      locale,
+    );
+  }
+
+  getAchievementStatistics(
+    region: Region,
+    realmSlug: string,
+    characterName: string,
+    locale?: Locale,
+  ): Promise<CharacterAchievementStatisticsPayload | null> {
+    return this.fetch(
+      region,
+      this.path(this.achievementStatisticsPath, realmSlug, characterName),
+      characterAchievementStatisticsSchema.parse,
       locale,
     );
   }

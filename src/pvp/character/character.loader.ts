@@ -30,7 +30,8 @@ export class CharacterLoader {
   ) {}
 
   /**
-   * Ratings, stats, render URLs and the PvP history: 4 requests, plus one per
+   * Ratings, stats, highest ratings, render URLs and the PvP history: 5
+   * requests, plus one per
    * ladder the character played this season. Read in English, which the
    * history's name patterns need and nothing here shows translated.
    */
@@ -38,13 +39,15 @@ export class CharacterLoader {
     const startedAt = new Date();
     const at = [region, realmSlug, characterName, DEFAULT_LOCALE] as const;
 
-    const [media, summary, statistics, achievements, seasons] = await Promise.all([
-      this.profiles.getMedia(...at),
-      this.profiles.getPvpSummary(...at),
-      this.profiles.getStatistics(...at),
-      this.profiles.getAchievements(...at),
-      this.seasonsOf(region),
-    ]);
+    const [media, summary, statistics, achievements, achievementStatistics, seasons] =
+      await Promise.all([
+        this.profiles.getMedia(...at),
+        this.profiles.getPvpSummary(...at),
+        this.profiles.getStatistics(...at),
+        this.profiles.getAchievements(...at),
+        this.profiles.getAchievementStatistics(...at),
+        this.seasonsOf(region),
+      ]);
 
     const ladders = (summary?.brackets ?? []).flatMap(({ href }) => {
       const bracket = bracketOfHref(href);
@@ -72,6 +75,7 @@ export class CharacterLoader {
           payload ? [{ bracket, payload }] : [],
         ),
         statistics,
+        achievementStatistics,
         pvpHistory: achievements ? pvpHistoryOf(achievements, seasons) : [],
       },
       startedAt,

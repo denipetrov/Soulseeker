@@ -281,9 +281,10 @@ The response and its fields:
 - **Parameters.** Region, realm slug and name are all required. The name is NFC-normalised
   and lowercased, letters only, 2–12 of them. `locale` is one of `LOCALES`
   (`blizzard.constants.ts`) and defaults to `en_US`.
-- **Blizzard calls.** A full page costs 7 + one per ladder (~13):
+- **Blizzard calls.** A full page costs 8 + one per ladder (~14):
   - `core`, the same in every language, always read in `en_US`: character-media,
-    pvp-summary, one pvp-bracket per ladder it lists, statistics and achievements;
+    pvp-summary, one pvp-bracket per ladder it lists, statistics, achievements and
+    achievement statistics;
   - `localized`, per language: profile, specializations and equipment.
   - pvp-summary lists exactly the ladders played this season, per-spec Shuffle and Blitz
     included, so nothing is spent on ladders the character never played.
@@ -302,11 +303,26 @@ The response and its fields:
     is a 503 with `Retry-After: 60`, and anything else a 502.
 - **Payload sizes.** Achievements (~2 MB) are cut down to the PvP history before caching.
   Specializations (~500 KB) keep only each spec's active loadout and PvP talents.
-  Equipped items keep only `item`, `slot`, `name`, `media`, `bonus_list`, `enchantments`,
-  `sockets`, `set` and `transmog`: stats, armor, prices and requirements are dropped.
-  Blizzard's API links (`_links`, `key.href`) are stripped everywhere. On a real
-  character, `core` is ~45 KB and `localized` ~90 KB (equipment ~14 KB).
+  Equipped items keep only `item`, `slot`, `name`, `media`, `level`, `quality`,
+  `bonus_list`, `enchantments`, `sockets`, `set`, `transmog`, `limit_category` and
+  `spells`: stats, armor, prices and requirements are dropped. Blizzard's API links
+  (`_links`, `key.href`) are stripped everywhere. On a real character, `core` is ~45 KB
+  and `localized` ~95 KB (equipment ~21 KB).
+- **Embellishments** carry `limit_category` (`Unique-Equipped: Embellished (2)`) and their
+  effect in `spells`. Other items carry a `limit_category` too, such as the Gladiator's
+  Medallion. The text is in the requested language.
 - **Statistics.** Avoidance and speed have no `value`, so their `rating_bonus` stands in.
+  `versatility` is the rating behind `versatilityDamageDoneBonus`.
+- **Ladders.**
+  - `rounds` is Solo Shuffle's round record (`season_round_statistics`); `played` / `won` /
+    `lost` are matches. It is null on every other ladder.
+  - `rank` is read from Rankwarden's `characters.brackets.<ladder>.rank` on every answer
+    and never cached, because ranks move hourly. It is one lookup by season, region and
+    character id. It is null when Rankwarden does not track the character or ladder, or
+    when the read fails.
+- **Highest ratings** (`highestRatings`) are achievement statistics 370, 595 and 596 (2v2,
+  3v3, 5v5 personal), matched by id. Blizzard has none for RBG, Shuffle or Blitz. A 0, or
+  Blizzard's 2^32 − 2 "never set", becomes null.
 - **PvP history** (`pvp-history.ts`) is parsed from English names, account-wide:
   - **Tiers.** `<Tier>[ I| II]: [<Expansion> ]Season <N>`, where the tier is Combatant,
     Challenger, Rival, Duelist, Elite, Gladiator, Legend, Strategist or Battle Mender.
@@ -322,7 +338,9 @@ The response and its fields:
   - Look-alikes such as `Scholomance Challenger`, `Challenge Warlord: Gold` and
     `Cruel Elite` are ignored.
 - **Sync.** Only when `core` was fetched fresh, and on the next tick after the response:
-  - Every ladder from pvp-summary goes in `brackets`, without `rank`.
+  - Every ladder from pvp-summary goes in `brackets`, without `rank`. Solo Shuffle sends
+    its rounds as `played` / `won` / `lost`: that is what Blizzard's leaderboard, and so
+    Rankwarden's sweep, counts.
   - The profile goes too, but only for `en_US`, so Rankwarden never stores translated
     names. Its fields are mapped as Rankwarden's enrichment maps them: `gender.type`,
     `realm.name`, `active_title.display_string`.

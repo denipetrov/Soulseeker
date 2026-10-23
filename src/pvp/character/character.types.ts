@@ -16,7 +16,15 @@ export interface PvpCharacterStatistics {
   mastery: RatedStat | null;
   meleeCrit: RatedStat | null;
   meleeHaste: RatedStat | null;
+  /** The versatility rating, whose damage-done effect is `versatilityDamageDoneBonus`. */
+  versatility: number | null;
   versatilityDamageDoneBonus: number | null;
+}
+
+export interface MatchRecord {
+  played: number;
+  won: number;
+  lost: number;
 }
 
 /** The character's standing on one ladder this season. */
@@ -29,6 +37,25 @@ export interface PvpCharacterBracket {
   lost: number;
   /** Shuffle and Blitz: the spec the ladder is for. */
   specialization: NamedRef | null;
+  /** Solo Shuffle: the rounds behind the match record. Null on every other ladder. */
+  rounds: MatchRecord | null;
+  /**
+   * The rank on the ladder, as Rankwarden's last sweep recorded it. Read on every
+   * answer, not cached; null when Rankwarden does not track the character or ladder.
+   */
+  rank: number | null;
+}
+
+/**
+ * The highest personal rating the character ever reached, from Blizzard's
+ * achievement statistics. Blizzard tracks no such statistic for RBG, Solo
+ * Shuffle or Blitz. Null when never played.
+ */
+export interface HighestRatings {
+  '2v2': number | null;
+  '3v3': number | null;
+  /** Legacy: 5v5 arenas ended in Mists of Pandaria. */
+  '5v5': number | null;
 }
 
 /** A selected talent with its tooltip, as Blizzard shapes it. */
@@ -98,6 +125,7 @@ export interface CorePart {
   brackets: PvpCharacterBracket[];
   honor: { level: number | null; honorableKills: number | null } | null;
   statistics: PvpCharacterStatistics | null;
+  highestRatings: HighestRatings | null;
   pvpHistory: PvpHistoryEntry[];
 }
 
@@ -121,6 +149,7 @@ export interface PvpCharacterResponse {
   honor: CorePart['honor'];
   specializations: PvpCharacterSpecializations | null;
   statistics: PvpCharacterStatistics | null;
+  highestRatings: HighestRatings | null;
   equipment: PvpCharacterEquipment | null;
   pvpHistory: PvpHistoryEntry[];
   /** When the older of the two cached parts was fetched from Blizzard. */
