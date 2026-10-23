@@ -76,9 +76,24 @@ function answerFor(field: string): Record<string, unknown> {
         },
       };
     case 'raid_achievement_curve':
-      return { raid_achievement_curve: [{ raid: args[0], aotc: '2026-04-22T01:53:00.000Z' }] };
+      return {
+        raid_achievement_curve: args.map((raid) => ({ raid, aotc: '2026-04-22T01:53:00.000Z' })),
+      };
     case 'mythic_plus_scores_by_season':
-      return { mythic_plus_scores_by_season: [{ season, scores: { all: 1760.9 }, segments: {} }] };
+      return {
+        mythic_plus_scores_by_season: [
+          {
+            season,
+            scores: { all: 1760.9 },
+            segments: { all: { score: 1760.9, color: '#72ff56' } },
+          },
+          ...(args[1] === 'previous'
+            ? [{ season: 'season-mn-1', scores: { all: 3004.5 }, segments: {} }]
+            : []),
+        ],
+      };
+    case 'mythic_plus_recent_runs':
+      return { mythic_plus_recent_runs: [RUN] };
     case 'mythic_plus_ranks':
       return { mythic_plus_ranks: { overall: { world: 1 } } };
     case 'mythic_plus_best_runs':
@@ -88,7 +103,40 @@ function answerFor(field: string): Record<string, unknown> {
   }
 }
 
+const BLIZZARD_RAIDS = '/blizzard/us/profile/wow/character/demon-soul/manongauz/encounters/raids';
+
+/** Blizzard's raid encounters: one boss of the catalogue raid killed on Mythic. */
+const ENCOUNTERS = {
+  expansions: [
+    {
+      expansion: { id: 516, name: 'Midnight' },
+      instances: [
+        {
+          instance: { id: 1, name: 'The Voidspire' },
+          modes: [
+            {
+              difficulty: { type: 'MYTHIC', name: 'Mythic' },
+              progress: {
+                completed_count: 1,
+                total_count: 6,
+                encounters: [
+                  {
+                    encounter: { id: 2700, name: 'Imperator Averzian' },
+                    completed_count: 6,
+                    last_kill_timestamp: Date.parse('2026-05-11T18:25:00Z'),
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 const raiderIo = () => app.upstream.requestsTo('/raiderio');
+const blizzard = () => app.upstream.requestsTo('/blizzard');
 const fieldsOf = (request: RecordedRequest | undefined) =>
   request?.query.get('fields')?.split(',').sort();
 const syncs = () => app.upstream.requestsTo('/rankwarden/mplus/characters/sync');
@@ -132,7 +180,10 @@ beforeAll(async () => {
     name: 'Tier MN 1',
     expansionId: 11,
     starts: { us: new Date('2026-03-17T15:00:00Z') },
-    encounters: [],
+    encounters: [
+      { id: 3176, slug: 'imperator-averzian', name: 'Imperator Averzian' },
+      { id: 3177, slug: 'vorasius', name: 'Vorasius' },
+    ],
   });
   await db.collection('mplus_seasons').insertOne({
     slug: 'season-mn-2',
@@ -140,6 +191,11 @@ beforeAll(async () => {
     expansionId: 11,
     starts: { us: new Date('2026-08-18T15:00:00Z') },
     dungeonIds: [9527],
+    cutoffs: {
+      us: {
+        quantiles: { p999: { all: { minScore: 3900 } }, p990: { all: { minScore: 1700 } } },
+      },
+    },
   });
   // The catalogue was read at boot, before these: let its 1 s TTL pass.
   await new Promise((resolve) => setTimeout(resolve, 1_100));
@@ -156,6 +212,8 @@ beforeEach(async () => {
   app.upstream.reset();
   app.upstream.route((request) => {
     if (request.path === '/rankwarden/mplus/characters/sync') return { status: 200, body: {} };
+    if (request.path === BLIZZARD_RAIDS) return { status: 200, body: ENCOUNTERS };
+    if (request.path.startsWith('/blizzard')) return { status: 404, body: {} };
     if (request.path !== '/raiderio/characters/profile') return undefined;
     // Raider.io answers 400 for a character it does not know.
     if (request.query.get('name') !== 'manongauz')
@@ -176,25 +234,68 @@ describe('GET /pve/character', () => {
       'gear',
       'guild',
       'mythic_plus_best_runs:all',
+      'mythic_plus_highest_level_runs',
+      'mythic_plus_previous_weekly_highest_level_runs',
       'mythic_plus_ranks',
-      'mythic_plus_scores_by_season:current',
+      'mythic_plus_recent_runs',
+      'mythic_plus_scores_by_season:current:previous',
+      'mythic_plus_weekly_highest_level_runs',
+      // The current expansion's raids, from the catalogue.
+      'raid_achievement_curve:tier-mn-1',
       'raid_progression:current-expansion',
       'talents:categorized',
     ]);
     expect(first.body).toMatchObject({
       character: { name: 'Manongauz', activeSpecName: 'Holy', realm: 'Demon Soul' },
-      guild: { name: 'veow' },
+      guild: { name: 'veow', realm: 'Demon Soul' },
       gear: { itemLevelEquipped: 291 },
       raidProgression: { 'tier-mn-1': { total_bosses: 9 } },
-      mythicPlusScores: [{ season: 'season-mn-2', scores: { all: 1760.9 } }],
-      mythicPlusBestRuns: [{ dungeon: 'Temple of Sethraliss', spec: { id: 65 } }],
+      raidAchievementCurve: [{ raid: 'tier-mn-1' }],
+      raidBosses: {
+        'tier-mn-1': [
+          {
+            slug: 'imperator-averzian',
+            kills: { mythic: { count: 6, lastKillAt: '2026-05-11T18:25:00.000Z' } },
+          },
+          { slug: 'vorasius', kills: {} },
+        ],
+      },
+      mythicPlusScores: [
+        {
+          season: 'season-mn-2',
+          scores: { all: 1760.9 },
+          colors: { all: '#72ff56' },
+          topPercent: { percent: 1, minScore: 1700 },
+        },
+        { season: 'season-mn-1', scores: { all: 3004.5 }, topPercent: null },
+      ],
+      mythicPlusBestRuns: [
+        { dungeon: 'Temple of Sethraliss', spec: { id: 65 }, par_time_ms: 1920999 },
+      ],
+      mythicPlusRecentRuns: [{ dungeon: 'Temple of Sethraliss' }],
       stale: false,
     });
     expect(first.body.mythicPlusBestRuns[0]).not.toHaveProperty('keystone_run_id');
+    // One Blizzard request for every boss, in English to match the catalogue's names.
+    expect(blizzard()).toHaveLength(1);
+    expect(blizzard()[0]?.query.get('locale')).toBe('en_US');
 
     const second = await lookup();
     expect(second.body).toEqual(first.body);
     expect(raiderIo()).toHaveLength(1);
+    expect(blizzard()).toHaveLength(1);
+  });
+
+  it('still answers when Blizzard fails, with no bosses', async () => {
+    app.upstream.route((request) =>
+      request.path === BLIZZARD_RAIDS ? { status: 500, body: {} } : undefined,
+    );
+
+    const response = await lookup();
+
+    expect(response.status).toBe(200);
+    expect(response.body.raidBosses).toBeNull();
+    expect(response.body.mythicPlusScores).toHaveLength(2);
   });
 
   it('pushes the season’s runs to Rankwarden after a fresh whole page', async () => {
@@ -229,6 +330,7 @@ describe('GET /pve/character', () => {
       'character',
       'fetchedAt',
       'raidAchievementCurve',
+      'raidBosses',
       'raidProgression',
       'realmSlug',
       'region',
@@ -237,11 +339,28 @@ describe('GET /pve/character', () => {
     expect(raid.body.raidAchievementCurve).toEqual([
       { raid: 'tier-mn-1', aotc: '2026-04-22T01:53:00.000Z' },
     ]);
+    expect(Object.keys(raid.body.raidBosses)).toEqual(['tier-mn-1']);
     // A part, not the page: nothing to push.
     expect(syncs()).toHaveLength(0);
 
     await lookup('&raidProgression=tier-mn-1');
     expect(raiderIo()).toHaveLength(1);
+    // The bosses of every raid were cached by the first answer.
+    expect(blizzard()).toHaveLength(1);
+  });
+
+  it('shares one Blizzard request for bosses between the page and its raid widgets', async () => {
+    await lookup();
+    await lookup('&raidProgression=tier-mn-1');
+
+    expect(blizzard()).toHaveLength(1);
+  });
+
+  it('shows no bosses for a season alone', async () => {
+    const season = await lookup('&mplusSeasonScore=season-mn-2');
+
+    expect(season.body).not.toHaveProperty('raidBosses');
+    expect(blizzard()).toHaveLength(0);
   });
 
   it('asks for a raid and a season in one Raider.io request', async () => {

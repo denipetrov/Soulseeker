@@ -30,6 +30,10 @@ import {
   type CharacterSpecializationsPayload,
 } from './schemas/character-profile.schema.js';
 import {
+  characterRaidEncountersSchema,
+  type CharacterRaidEncountersPayload,
+} from './schemas/character-raid-encounters.schema.js';
+import {
   characterStatisticsSchema,
   type CharacterStatisticsPayload,
 } from './schemas/character-statistics.schema.js';
@@ -57,6 +61,7 @@ export class ProfileApi {
   private readonly equipmentPath: string;
   private readonly achievementsPath: string;
   private readonly achievementStatisticsPath: string;
+  private readonly raidEncountersPath: string;
 
   constructor(
     private readonly http: BlizzardHttpService,
@@ -73,6 +78,9 @@ export class ProfileApi {
     this.equipmentPath = config.get('BLIZZARD_PATH_CHARACTER_EQUIPMENT', { infer: true });
     this.achievementsPath = config.get('BLIZZARD_PATH_CHARACTER_ACHIEVEMENTS', { infer: true });
     this.achievementStatisticsPath = config.get('BLIZZARD_PATH_CHARACTER_ACHIEVEMENT_STATISTICS', {
+      infer: true,
+    });
+    this.raidEncountersPath = config.get('BLIZZARD_PATH_CHARACTER_RAID_ENCOUNTERS', {
       infer: true,
     });
   }
@@ -220,6 +228,20 @@ export class ProfileApi {
       region,
       this.path(this.achievementStatisticsPath, realmSlug, characterName),
       characterAchievementStatisticsSchema.parse,
+      locale,
+    );
+  }
+
+  getRaidEncounters(
+    region: Region,
+    realmSlug: string,
+    characterName: string,
+    locale?: Locale,
+  ): Promise<CharacterRaidEncountersPayload | null> {
+    return this.fetch(
+      region,
+      this.path(this.raidEncountersPath, realmSlug, characterName),
+      characterRaidEncountersSchema.parse,
       locale,
     );
   }

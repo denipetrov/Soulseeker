@@ -55,7 +55,18 @@ beforeAll(async () => {
       expansionId: 10,
       starts: { us: new Date('2024-09-17T15:00:00Z') },
       dungeonIds: [9527, 14938],
-      cutoffs: { us: { status: 'ok' } },
+      // As Rankwarden stores them: only the quantiles' overall minimum score is kept.
+      cutoffs: {
+        us: {
+          status: 'ok',
+          keystones: { keystoneHero: { score: 2500 } },
+          quantiles: {
+            p999: { score: null, all: { quantile: 0.999, minScore: 3487.2 }, horde: {} },
+            p990: { score: null, all: { quantile: 0.99, minScore: 2950 } },
+          },
+        },
+        eu: { status: 'missing' },
+      },
     },
     {
       slug: 'season-mn-2',
@@ -86,11 +97,13 @@ describe('PveCatalogue', () => {
       {
         slug: 'liberation-of-undermine',
         name: 'Liberation of Undermine',
+        expansionId: 10,
         encounters: [encounter(3009, 'vexie-and-the-geargrinders', 'Vexie and the Geargrinders')],
       },
       {
         slug: 'nerubar-palace',
         name: 'Nerub-ar Palace',
+        expansionId: 10,
         encounters: [
           encounter(2902, 'ulgrax-the-devourer', 'Ulgrax the Devourer'),
           encounter(2922, 'queen-ansurek', 'Queen Ansurek'),
@@ -99,12 +112,29 @@ describe('PveCatalogue', () => {
       {
         slug: 'aberrus-the-shadowed-crucible',
         name: 'Aberrus, the Shadowed Crucible',
+        expansionId: 9,
         encounters: [],
       },
     ]);
     expect(mplusSeasons).toEqual([
-      { slug: 'season-mn-2', name: 'MN Season 2', dungeonIds: [1, 2, 3] },
-      { slug: 'season-tww-1', name: 'TWW Season 1', dungeonIds: [9527, 14938] },
+      {
+        slug: 'season-mn-2',
+        name: 'MN Season 2',
+        dungeonIds: [1, 2, 3],
+        expansionId: 11,
+        cutoffs: {},
+      },
+      {
+        slug: 'season-tww-1',
+        name: 'TWW Season 1',
+        dungeonIds: [9527, 14938],
+        expansionId: 10,
+        cutoffs: { us: { p999: 3487.2, p990: 2950 }, eu: { p999: null, p990: null } },
+      },
+    ]);
+    expect((await catalogue.currentExpansionRaids()).map((raid) => raid.slug)).toEqual([
+      'liberation-of-undermine',
+      'nerubar-palace',
     ]);
     expect(await catalogue.raidSlugs()).toEqual([
       'liberation-of-undermine',

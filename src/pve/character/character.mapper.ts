@@ -1,29 +1,46 @@
+import type { CharacterRaidEncountersPayload } from '../../blizzard/schemas/character-raid-encounters.schema.js';
 import type { RaiderIoRegion } from '../../raiderio/raiderio.constants.js';
 import type {
   RaiderIoBestRun,
   RaiderIoCharacterPayload,
 } from '../../raiderio/schemas/character-profile.schema.js';
 import type { MplusCharacterSyncInput } from '../../rankwarden/dto/mplus-character-sync.dto.js';
-import type {
-  FullPart,
-  PveBestRun,
-  PveCharacterBase,
-  PveCharacterResponse,
-  PveSeasonScores,
-  RaidPart,
-  SeasonPart,
+import type { CatalogueMplusSeason, CatalogueRaid } from '../../seasons/pve-catalogue.service.js';
+import {
+  RAID_DIFFICULTIES,
+  type BossesPart,
+  type FullPart,
+  type PveCharacterBase,
+  type PveCharacterResponse,
+  type PveRun,
+  type PveSeasonScores,
+  type RaidBoss,
+  type RaidDifficulty,
+  type RaidPart,
+  type SeasonPart,
+  type TopPercent,
 } from './character.types.js';
 
-/** What the whole page asks Raider.io for. */
-export const FULL_FIELDS = [
-  'gear',
-  'talents:categorized',
-  'guild',
-  'raid_progression:current-expansion',
-  'mythic_plus_scores_by_season:current',
-  'mythic_plus_ranks',
-  'mythic_plus_best_runs:all',
-] as const;
+/**
+ * What the whole page asks Raider.io for. `currentRaids` are the slugs of the
+ * current expansion's raids, from the catalogue, for their AOTC / Cutting Edge.
+ */
+export function fullFields(currentRaids: readonly string[]): string[] {
+  return [
+    'gear',
+    'talents:categorized',
+    'guild',
+    'raid_progression:current-expansion',
+    ...(currentRaids.length > 0 ? [`raid_achievement_curve:${currentRaids.join(':')}`] : []),
+    'mythic_plus_scores_by_season:current:previous',
+    'mythic_plus_ranks',
+    'mythic_plus_best_runs:all',
+    'mythic_plus_recent_runs',
+    'mythic_plus_highest_level_runs',
+    'mythic_plus_weekly_highest_level_runs',
+    'mythic_plus_previous_weekly_highest_level_runs',
+  ];
+}
 
 export const raidFields = (slug: string) => [
   `raid_progression:${slug}`,
@@ -38,24 +55,36 @@ function baseOf(payload: RaiderIoCharacterPayload): PveCharacterBase {
     race: payload.race,
     class: payload.class,
     activeSpecName: payload.active_spec_name ?? null,
+    activeSpecRole: payload.active_spec_role ?? null,
     gender: payload.gender ?? null,
     faction: payload.faction ?? null,
     realm: payload.realm,
     region: payload.region,
     thumbnailUrl: payload.thumbnail_url ?? null,
+    achievementPoints: payload.achievement_points ?? null,
+    profileBanner: payload.profile_banner ?? null,
+    profileUrl: payload.profile_url ?? null,
+    lastCrawledAt: payload.last_crawled_at ?? null,
   };
 }
 
-/** Only `season` and `scores`; the per-role colour `segments` are dropped. */
-const scoresOf = (payload: RaiderIoCharacterPayload): PveSeasonScores[] =>
-  (payload.mythic_plus_scores_by_season ?? []).map(({ season, scores }) => ({ season, scores }));
+/** `season` and `scores`, with each score's colour taken from Raider.io's `segments`. */
+const scoresOf = (payload: RaiderIoCharacterPayload): Omit<PveSeasonScores, 'topPercent'>[] =>
+  (payload.mythic_plus_scores_by_season ?? []).map(({ season, scores, segments }) => ({
+    season,
+    scores,
+    colors: Object.fromEntries(
+      Object.entries(segments ?? {}).map(([key, segment]) => [key, segment.color]),
+    ),
+  }));
 
-function bestRunOf(run: RaiderIoBestRun): PveBestRun {
+function runOf(run: RaiderIoBestRun): PveRun {
   return {
     dungeon: run.dungeon,
     mythic_level: run.mythic_level,
     completed_at: run.completed_at,
     clear_time_ms: run.clear_time_ms,
+    par_time_ms: run.par_time_ms ?? null,
     num_keystone_upgrades: run.num_keystone_upgrades ?? null,
     score: run.score,
     icon_url: run.icon_url ?? null,
@@ -71,19 +100,28 @@ function bestRunOf(run: RaiderIoBestRun): PveBestRun {
   };
 }
 
+const runsOf = (runs: RaiderIoBestRun[] | undefined): PveRun[] => (runs ?? []).map(runOf);
+
 export function fullPartOf(payload: RaiderIoCharacterPayload, fetchedAt: Date): FullPart {
   return {
     fetchedAt: fetchedAt.toISOString(),
     character: baseOf(payload),
-    guild: payload.guild ? { name: payload.guild.name } : null,
+    guild: payload.guild ? { name: payload.guild.name, realm: payload.guild.realm ?? null } : null,
     gear: payload.gear
       ? { itemLevelEquipped: payload.gear.item_level_equipped ?? null, items: payload.gear.items }
       : null,
     talentLoadout: payload.talentLoadout ?? null,
     raidProgression: payload.raid_progression ?? {},
+    raidAchievementCurve: payload.raid_achievement_curve ?? [],
     mythicPlusScores: scoresOf(payload),
     mythicPlusRanks: payload.mythic_plus_ranks ?? null,
-    mythicPlusBestRuns: (payload.mythic_plus_best_runs ?? []).map(bestRunOf),
+    mythicPlusBestRuns: runsOf(payload.mythic_plus_best_runs),
+    mythicPlusRecentRuns: runsOf(payload.mythic_plus_recent_runs),
+    mythicPlusHighestLevelRuns: runsOf(payload.mythic_plus_highest_level_runs),
+    mythicPlusWeeklyHighestLevelRuns: runsOf(payload.mythic_plus_weekly_highest_level_runs),
+    mythicPlusPreviousWeeklyHighestLevelRuns: runsOf(
+      payload.mythic_plus_previous_weekly_highest_level_runs,
+    ),
   };
 }
 
@@ -110,6 +148,104 @@ export function seasonPartOf(payload: RaiderIoCharacterPayload, fetchedAt: Date)
   };
 }
 
+/**
+ * Whether a score is within the region's top 0.1% or top 1% of its season,
+ * by the season's cutoffs in the catalogue.
+ */
+export function topPercentOf(
+  score: number,
+  season: CatalogueMplusSeason | undefined,
+  region: string,
+): TopPercent | null {
+  const cutoffs = season?.cutoffs[region];
+  if (!cutoffs || score <= 0) return null;
+
+  if (cutoffs.p999 !== null && score >= cutoffs.p999)
+    return { percent: 0.1, minScore: cutoffs.p999 };
+  if (cutoffs.p990 !== null && score >= cutoffs.p990) return { percent: 1, minScore: cutoffs.p990 };
+
+  return null;
+}
+
+/** A name compared across Blizzard and Raider.io: no case, accents, spaces or punctuation. */
+const nameKey = (name: string) =>
+  name
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+/**
+ * The same, short: without a leading "The" and anything after a comma. The two
+ * sites disagree on exactly those: Blizzard's "Sikran, Captain of the Sureki"
+ * and "The One-Armed Bandit" are Raider.io's "Sikran" and "One-Armed Bandit".
+ */
+const shortNameKey = (name: string) => nameKey(name.split(',')[0]!.replace(/^the\s+/i, ''));
+
+const difficultyOf = (type: string): RaidDifficulty | null => {
+  const key = type.toLowerCase();
+  return (RAID_DIFFICULTIES as readonly string[]).includes(key) ? (key as RaidDifficulty) : null;
+};
+
+/**
+ * Each catalogue raid's bosses with the character's kills, from Blizzard's raid
+ * encounters.
+ *
+ * Bosses are matched by name: Blizzard's encounter ids are not Raider.io's,
+ * and a Raider.io tier such as `tier-mn-1` spans several Blizzard instances.
+ * The full name is tried first, then the short one. A name killed in more than
+ * one expansion counts the newest. A boss the character never killed has no
+ * kills.
+ */
+export function bossesPartOf(
+  payload: CharacterRaidEncountersPayload,
+  raids: readonly CatalogueRaid[],
+  fetchedAt: Date,
+): BossesPart {
+  const kills = new Map<string, RaidBoss['kills']>();
+  /** Short name → full name, of every boss Blizzard listed. */
+  const shortNames = new Map<string, string>();
+
+  // Oldest expansion first, as Blizzard lists them: a newer one overwrites.
+  for (const { instances } of payload.expansions) {
+    for (const { modes } of instances) {
+      for (const { difficulty, progress } of modes) {
+        const key = difficultyOf(difficulty.type);
+        if (!key) continue;
+
+        for (const { encounter, completed_count, last_kill_timestamp } of progress.encounters) {
+          const name = nameKey(encounter.name);
+          const boss = kills.get(name) ?? {};
+          boss[key] = {
+            count: completed_count,
+            lastKillAt:
+              last_kill_timestamp === undefined
+                ? null
+                : new Date(last_kill_timestamp).toISOString(),
+          };
+          kills.set(name, boss);
+          shortNames.set(shortNameKey(encounter.name), name);
+        }
+      }
+    }
+  }
+
+  return {
+    fetchedAt: fetchedAt.toISOString(),
+    raids: Object.fromEntries(
+      raids.map((raid) => [
+        raid.slug,
+        raid.encounters.map(({ slug, name }) => ({
+          slug,
+          name,
+          kills:
+            kills.get(nameKey(name)) ?? kills.get(shortNames.get(shortNameKey(name)) ?? '') ?? {},
+        })),
+      ]),
+    ),
+  };
+}
+
 /** The parts one answer is built from: the whole page, or a raid and/or a season. */
 export interface AnswerParts {
   full?: FullPart;
@@ -117,15 +253,36 @@ export interface AnswerParts {
   season?: SeasonPart;
 }
 
+/** What an answer is completed with besides its Raider.io parts. */
+export interface AnswerExtras {
+  /** The catalogue's seasons, for each score's top 0.1% / 1%. */
+  mplusSeasons: readonly CatalogueMplusSeason[];
+  /** The raids whose bosses the answer shows; none for a season-only answer. */
+  bossRaids: readonly string[];
+  /** Per-boss kills, or null when Blizzard could not be asked. */
+  bosses: BossesPart | null;
+}
+
 export function responseOf(
   region: RaiderIoRegion,
   realmSlug: string,
   parts: AnswerParts,
+  extras: AnswerExtras,
   stale: boolean,
 ): PveCharacterResponse {
   const present = [parts.full, parts.raid, parts.season].filter((part) => part !== undefined);
   const newest = present.reduce((a, b) => (a.fetchedAt >= b.fetchedAt ? a : b));
   const oldest = present.reduce((a, b) => (a.fetchedAt <= b.fetchedAt ? a : b));
+
+  const withTopPercent = (scores: Omit<PveSeasonScores, 'topPercent'>[]): PveSeasonScores[] =>
+    scores.map((entry) => ({
+      ...entry,
+      topPercent: topPercentOf(
+        typeof entry.scores.all === 'number' ? entry.scores.all : 0,
+        extras.mplusSeasons.find((season) => season.slug === entry.season),
+        region,
+      ),
+    }));
 
   const response: PveCharacterResponse = {
     region,
@@ -136,19 +293,34 @@ export function responseOf(
   };
 
   if (parts.full) {
-    response.guild = parts.full.guild;
-    response.gear = parts.full.gear;
-    response.talentLoadout = parts.full.talentLoadout;
-    response.raidProgression = parts.full.raidProgression;
-    response.mythicPlusScores = parts.full.mythicPlusScores;
-    response.mythicPlusRanks = parts.full.mythicPlusRanks;
-    response.mythicPlusBestRuns = parts.full.mythicPlusBestRuns;
+    const { full } = parts;
+    response.guild = full.guild;
+    response.gear = full.gear;
+    response.talentLoadout = full.talentLoadout;
+    response.raidProgression = full.raidProgression;
+    // Cached before the curve was asked for on the whole page: empty until refetched.
+    response.raidAchievementCurve = full.raidAchievementCurve ?? [];
+    response.mythicPlusScores = withTopPercent(full.mythicPlusScores);
+    response.mythicPlusRanks = full.mythicPlusRanks;
+    response.mythicPlusBestRuns = full.mythicPlusBestRuns;
+    response.mythicPlusRecentRuns = full.mythicPlusRecentRuns ?? [];
+    response.mythicPlusHighestLevelRuns = full.mythicPlusHighestLevelRuns ?? [];
+    response.mythicPlusWeeklyHighestLevelRuns = full.mythicPlusWeeklyHighestLevelRuns ?? [];
+    response.mythicPlusPreviousWeeklyHighestLevelRuns =
+      full.mythicPlusPreviousWeeklyHighestLevelRuns ?? [];
   }
   if (parts.raid) {
     response.raidProgression = parts.raid.raidProgression;
     response.raidAchievementCurve = parts.raid.raidAchievementCurve;
   }
-  if (parts.season) response.mythicPlusScores = parts.season.mythicPlusScores;
+  if (parts.season) response.mythicPlusScores = withTopPercent(parts.season.mythicPlusScores);
+
+  if (extras.bossRaids.length > 0) {
+    const { bosses } = extras;
+    response.raidBosses = bosses
+      ? Object.fromEntries(extras.bossRaids.map((slug) => [slug, bosses.raids[slug] ?? []]))
+      : null;
+  }
 
   return response;
 }

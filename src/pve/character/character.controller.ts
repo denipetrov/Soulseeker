@@ -21,76 +21,118 @@ import { PveCharacterService } from './character.service.js';
 import type { PveCharacterResponse } from './character.types.js';
 import { pveCharacterQuerySchema, type PveCharacterQuery } from './dto/character-query.dto.js';
 
+const RUN = {
+  dungeon: 'Den of Nalorakk',
+  mythic_level: 23,
+  completed_at: '2026-10-22T15:28:33.000Z',
+  clear_time_ms: 1595637,
+  par_time_ms: 1920999,
+  num_keystone_upgrades: 1,
+  score: 536.3,
+  icon_url:
+    'https://cdn.raiderio.net/images/wow/icons/large/inv_achievement_dungeon_proveyourworth.jpg',
+  background_image_url:
+    'https://cdn.raiderio.net/images/dungeons/expansion11/base/den-of-nalorakk.jpg',
+  url: 'https://raider.io/mythic-plus-runs/season-mn-2/22217808-23-den-of-nalorakk',
+  affixes: [
+    {
+      id: 10,
+      icon_url: 'https://cdn.raiderio.net/images/wow/icons/large/ability_toughness.jpg',
+      wowhead_url: 'https://wowhead.com/affix=10',
+    },
+  ],
+  spec: { id: 262 },
+  role: 'dps',
+};
+
 const EXAMPLE: PveCharacterResponse = {
-  region: 'us',
-  realmSlug: 'demon-soul',
+  region: 'eu',
+  realmSlug: 'tarren-mill',
   character: {
-    name: 'Manongauz',
-    race: 'Human',
-    class: 'Paladin',
-    activeSpecName: 'Holy',
+    name: 'Stoveteacher',
+    race: 'Dwarf',
+    class: 'Shaman',
+    activeSpecName: 'Elemental',
+    activeSpecRole: 'DPS',
     gender: 'female',
     faction: 'alliance',
-    realm: 'Demon Soul',
-    region: 'us',
+    realm: 'Tarren Mill',
+    region: 'eu',
     thumbnailUrl:
-      'https://render.worldofwarcraft.com/us/character/demon-soul/133/203724421-avatar.jpg',
+      'https://render.worldofwarcraft.com/eu/character/tarren-mill/108/190854508-avatar.jpg',
+    achievementPoints: 22250,
+    profileBanner: 'classbanner_shaman1',
+    profileUrl: 'https://raider.io/characters/eu/tarren-mill/Stoveteacher',
+    lastCrawledAt: '2026-10-22T00:28:40.000Z',
   },
-  guild: { name: 'veow' },
+  guild: { name: 'Echo', realm: 'Tarren Mill' },
   gear: {
-    itemLevelEquipped: 291,
+    itemLevelEquipped: 337,
     items: {
       head: {
         item_id: 271465,
-        item_level: 308,
-        name: 'Warhelm of the Consecrated Flame',
-        icon: 'inv_helm_plate_raidpaladinulatek_d_01',
+        item_level: 340,
+        name: 'Helm of the Stormcaller',
+        icon: 'inv_helm_mail_raidshaman_d_01',
+        item_quality: 4,
+        tier: '36',
         bonuses: [13452, 13658],
         enchants_detail: [{ id: 243981, name: 'Enchant Helm - Empowered Blessing of Speed' }],
         gems_detail: [{ id: 240902, name: '16 Mast & 7 Vers' }],
       },
     },
   },
-  talentLoadout: { loadout_spec_id: 65, loadout_text: 'CEEAAAAAAAAAAAAAAAAAAAAAAAAAALAwMAADWGmZ' },
+  talentLoadout: { loadout_spec_id: 262, loadout_text: 'CYQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzMzYmZ' },
   raidProgression: {
     'tier-mn-1': {
-      summary: '',
+      summary: '9/9 M',
       expansion_id: 11,
       total_bosses: 9,
-      normal_bosses_killed: 0,
-      heroic_bosses_killed: 0,
-      mythic_bosses_killed: 0,
+      normal_bosses_killed: 9,
+      heroic_bosses_killed: 9,
+      mythic_bosses_killed: 9,
     },
   },
-  mythicPlusScores: [
-    { season: 'season-mn-2', scores: { all: 1760.9, dps: 0, healer: 1760.9, tank: 0 } },
-  ],
-  mythicPlusRanks: { overall: { world: 1964157, region: 422278, realm: 928 } },
-  mythicPlusBestRuns: [
+  raidAchievementCurve: [
     {
-      dungeon: 'Temple of Sethraliss',
-      mythic_level: 14,
-      completed_at: '2026-09-21T00:42:59.000Z',
-      clear_time_ms: 1736151,
-      num_keystone_upgrades: 1,
-      score: 398.6,
-      icon_url:
-        'https://cdn.raiderio.net/images/wow/icons/large/achievement_dungeon_templeofsethraliss.jpg',
-      background_image_url:
-        'https://cdn.raiderio.net/images/dungeons/expansion7/base/temple-of-sethraliss.jpg',
-      url: 'https://raider.io/mythic-plus-runs/season-mn-2/14738020-14-temple-of-sethraliss',
-      affixes: [
-        {
-          id: 10,
-          icon_url: 'https://cdn.raiderio.net/images/wow/icons/large/ability_toughness.jpg',
-          wowhead_url: 'https://wowhead.com/affix=10',
-        },
-      ],
-      spec: { id: 65 },
-      role: 'healer',
+      raid: 'tier-mn-1',
+      aotc: '2026-05-11T18:25:00.000Z',
+      cutting_edge: '2026-05-11T18:25:00.000Z',
     },
   ],
-  fetchedAt: '2026-10-22T09:00:00.000Z',
+  raidBosses: {
+    'tier-mn-1': [
+      {
+        slug: 'imperator-averzian',
+        name: 'Imperator Averzian',
+        kills: {
+          heroic: { count: 3, lastKillAt: '2026-04-02T19:40:11.000Z' },
+          mythic: { count: 6, lastKillAt: '2026-05-11T18:25:00.000Z' },
+        },
+      },
+    ],
+  },
+  mythicPlusScores: [
+    {
+      season: 'season-mn-2',
+      scores: { all: 4256.3, dps: 4256.3, healer: 0, tank: 0 },
+      colors: { all: '#fe7e15', dps: '#fe7e15', healer: '#ffffff', tank: '#ffffff' },
+      topPercent: { percent: 0.1, minScore: 3920.4 },
+    },
+    {
+      season: 'season-mn-1',
+      scores: { all: 1220, dps: 1220, healer: 0, tank: 0 },
+      colors: { all: '#b9ffa2', dps: '#b9ffa2', healer: '#ffffff', tank: '#ffffff' },
+      topPercent: null,
+    },
+  ],
+  mythicPlusRanks: { overall: { world: 49, region: 22, realm: 4 } },
+  mythicPlusBestRuns: [RUN],
+  mythicPlusRecentRuns: [RUN],
+  mythicPlusHighestLevelRuns: [RUN],
+  mythicPlusWeeklyHighestLevelRuns: [RUN],
+  mythicPlusPreviousWeeklyHighestLevelRuns: [],
+  fetchedAt: '2026-10-23T09:00:00.000Z',
   stale: false,
 };
 

@@ -349,7 +349,8 @@ The response and its fields:
 ### PvE character
 
 `GET /pve/character?region=&realmSlug=&characterName=[&raidProgression=][&mplusSeasonScore=][&forceRefresh=true]`
-(`src/pve/character/`). One character, from Raider.io's `characters/profile`.
+(`src/pve/character/`). One character, from Raider.io's `characters/profile`, with per-boss
+kills from Blizzard's `encounters/raids`.
 
 - **Parameters.** Region (`cn` too), realm slug and name are required, with the same rules as
   PvP (`src/characters/dto/character-identity.ts`). There is no locale: Raider.io answers in
@@ -358,37 +359,63 @@ The response and its fields:
     Otherwise the answer is a 400, and Raider.io is not asked.
 - **What is asked for.** Each answer is one Raider.io request, for the fields of the parts it
   is missing:
-  - **Whole page**, when neither parameter is given: `gear`, `talents:categorized`, `guild`,
-    `raid_progression:current-expansion`, `mythic_plus_scores_by_season:current`,
-    `mythic_plus_ranks` and `mythic_plus_best_runs:all`.
+  - **Whole page**, when neither parameter is given:
+    - `gear`, `talents:categorized` and `guild`;
+    - `raid_progression:current-expansion`, and `raid_achievement_curve:<…>` for the current
+      expansion's raids from the catalogue;
+    - `mythic_plus_scores_by_season:current:previous` (current first) and `mythic_plus_ranks`;
+    - `mythic_plus_best_runs:all`, `mythic_plus_recent_runs`, `mythic_plus_highest_level_runs`,
+      `mythic_plus_weekly_highest_level_runs` and
+      `mythic_plus_previous_weekly_highest_level_runs`.
   - **`raidProgression=<slug>`**: `raid_progression:<slug>` and `raid_achievement_curve:<slug>`.
   - **`mplusSeasonScore=<slug>`**: `mythic_plus_scores_by_season:<slug>`.
   - Both parameters may be given together.
 - **What is kept.**
-  - Every answer has the base profile: name, race, class, active spec, gender, faction,
-    realm (its display name), region and thumbnail.
-  - Gear: `item_level_equipped`, and per slot `item_id`, `item_level`, `name`, `icon`,
-    `bonuses`, `enchants_detail` and `gems_detail`.
-  - Talents: the whole `talentLoadout` (~34 KB). Guild: its name.
-  - Raids: everything Raider.io returns, keyed by raid slug. The curve is
+  - **Base profile, in every answer:** name, race, class, active spec and role, gender,
+    faction, realm (its display name), region, thumbnail, achievement points, profile banner,
+    profile URL and `lastCrawledAt`.
+  - **Gear:** `item_level_equipped`, and per slot `item_id`, `item_level`, `name`, `icon`,
+    `item_quality`, `tier`, `bonuses`, `enchants_detail` and `gems_detail`.
+  - **Talents:** the whole `talentLoadout` (~34 KB). **Guild:** its name and realm.
+  - **Raids:** everything Raider.io returns, keyed by raid slug. The curve is
     `[{ raid, aotc?, cutting_edge? }]`, and empty when neither was earned.
-  - Scores: `season` and `scores` (the colour `segments` are dropped). Ranks: everything.
-  - Best runs drop `keystone_run_id`, `map_challenge_mode_id`, `par_time_ms`, `short_name`,
-    `zone_expansion_id` and `zone_id`. Affixes keep only `id`, `icon_url` and `wowhead_url`;
-    the rest is in `mplus_affixes`. The spec keeps only its `id`.
-  - A real whole page is ~45 KB.
-- **Cache.** One entry per part: `pve:character:<region>:<realm>:<name>:full`, `…:raid:<slug>`
-  and `…:season:<slug>`. A widget never pays for the page, nor the page for a widget.
+  - **Scores:** `season`, `scores`, and `colors` (each score's colour from Raider.io's
+    `segments`). **Ranks:** everything.
+  - **Top 0.1% / 1%:** `topPercent` on each score is worked out on every answer, not cached.
+    It compares `scores.all` with the region's `p999` / `p990` minimum score in the
+    catalogue: `{ percent: 0.1 | 1, minScore }`, or null below 1% or without cutoffs.
+  - **Runs (all five lists)** drop `keystone_run_id`, `map_challenge_mode_id`, `short_name`,
+    `zone_expansion_id` and `zone_id`. They keep `par_time_ms`, so the front end can show
+    the time left. Affixes keep only `id`, `icon_url` and `wowhead_url`; the rest is in
+    `mplus_affixes`. The spec keeps only its `id`.
+- **Raid bosses** (`raidBosses`, for the whole page's current raids or the one asked for):
+  - One Blizzard request (`encounters/raids`, in English), cached as
+    `pve:character:<…>:bosses` for every catalogue raid (~9 KB). The page and every raid
+    widget share it.
+  - Bosses are matched to the catalogue's encounters by name, because Blizzard's encounter
+    ids are not Raider.io's and `tier-mn-1` spans several Blizzard instances. The full
+    name is tried first, then the short form (no leading "The", nothing after a comma):
+    Blizzard's "Sikran, Captain of the Sureki" is Raider.io's "Sikran". On a real character
+    every boss killed in the last two expansions matched.
+  - Each boss has `kills` per `lfr` / `normal` / `heroic` / `mythic`: `{ count, lastKillAt }`.
+    A boss never killed has `{}`.
+  - Extra, not essential: a Blizzard failure serves the kept copy however old, or null, and
+    never fails the page. China has no Blizzard API, so it is always null there. A season-only
+    answer has no `raidBosses` field.
+- **Cache.** One entry per part: `pve:character:<region>:<realm>:<name>:full`, `…:raid:<slug>`,
+  `…:season:<slug>` and `…:bosses`. A widget never pays for the page, nor the page for a
+  widget.
   - A part is fresh for `PVE_CHARACTER_CACHE_TTL_SECONDS` (1 h) and kept
     `PVE_CHARACTER_STALE_SECONDS` (24 h) longer.
   - `forceRefresh` goes through `RefreshCooldown` (`refresh:pve:character:<id>`,
-    `PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS`).
-  - There is a single flight per field set on each replica.
+    `PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS`) and refetches the bosses too.
+  - There is a single flight per field set, and for the bosses, on each replica.
 - **Failures.** Raider.io's 400 ("no such character") is a 404. Otherwise, as for PvP: stale
-  if every part asked for is kept, else 503 with `Retry-After: 60` for a spent budget and 502
-  for anything else.
+  if every Raider.io part asked for is kept, else 503 with `Retry-After: 60` for a spent
+  budget and 502 for anything else.
 - **Sync.** After a fresh whole page only, and on the next tick, the current season's best
   runs go to `POST /mplus/characters/sync`:
+  - The season is the first one in `mythic_plus_scores_by_season`, which is the current one.
   - The dungeon is `zone_id`, the name, the slug from the run's url and `short_name`.
   - `timeRemainingMs` is `par_time_ms − clear_time_ms`.
   - Runs whose dungeon is not in the season's `dungeonIds` (from the catalogue) are left
@@ -402,20 +429,25 @@ The response and its fields:
 `PveCatalogue` (`src/seasons/pve-catalogue.service.ts`, exported by `SeasonsModule`) holds
 every raid and Mythic+ season Rankwarden catalogues, for the PvE character lookups.
 
-- **What it keeps.** From `raids`, each raid's `slug`, `name` and `encounters`
-  (`id`, `slug`, `name`, in boss order). From `mplus_seasons`, each season's `slug`, `name`
-  and `dungeonIds`. A projection keeps raid rankings, cutoffs and archive progress from
-  ever being read.
+- **What it keeps.**
+  - From `raids`: each raid's `slug`, `name`, `expansionId` and `encounters` (`id`, `slug`,
+    `name`, in boss order).
+  - From `mplus_seasons`: each season's `slug`, `name`, `expansionId`, `dungeonIds`, and
+    `cutoffs` per region. A region's cutoffs are the top 0.1% (`p999`) and top 1% (`p990`)
+    minimum scores, from `cutoffs.<region>.quantiles.*.all.minScore`.
+  - A projection keeps raid rankings, keystone-title cutoffs and archive progress from ever
+    being read.
 - **Order.** Newest expansion first, then the latest to open within it, by the earliest
   regional start. Unlisted entries are kept, since a character's history may name them.
 - **In memory, per replica.** It is read at startup (`onApplicationBootstrap`), then again
   on the first call after `PVE_CATALOGUE_TTL_SECONDS` (a day). There is a single flight
-  per replica.
+  per replica. The top-percent cutoffs move through a live season, so they can be up to a
+  day behind Rankwarden.
   - A failed reload keeps the last catalogue and is retried on the next call.
   - A failure at startup is logged and does not stop the boot. Only a replica that has
     never read the catalogue fails a call.
-- **API.** `catalogue()`, `raids()`, `mplusSeasons()`, `raidSlugs()`,
-  `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
+- **API.** `catalogue()`, `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
+  `raidSlugs()`, `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
 
 ## 8. Rankwarden sync
 

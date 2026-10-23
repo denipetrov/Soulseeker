@@ -39,6 +39,8 @@ const bestRunSchema = z.object({
 const seasonScoreSchema = z.object({
   season: z.string(),
   scores: z.object({ all: z.number() }).passthrough(),
+  // The same scores per role and spec, each with the colour Raider.io shows it in.
+  segments: z.record(z.string(), z.object({ color: z.string() }).passthrough()).optional(),
 });
 
 /** One equipped item: what the page renders, nothing else. */
@@ -47,6 +49,10 @@ const gearItemSchema = z.object({
   item_level: z.number().int(),
   name: z.string(),
   icon: z.string().optional(),
+  // 0 poor … 4 epic, 5 legendary: the border colour.
+  item_quality: z.number().int().optional(),
+  // The tier set the piece belongs to (`"36"`); absent on other items.
+  tier: z.string().optional(),
   bonuses: z.array(z.number().int()).optional(),
   enchants_detail: z.array(asIs).optional(),
   gems_detail: z.array(asIs).optional(),
@@ -67,13 +73,16 @@ export const raiderIoCharacterSchema = z.object({
   active_spec_role: z.string().nullable().optional(),
   gender: z.string().nullable().optional(),
   faction: z.string().nullable().optional(),
+  achievement_points: z.number().int().optional(),
   region: z.string(),
   realm: z.string(),
   profile_url: z.string().optional(),
+  // Raider.io's banner art for the profile, e.g. `classbanner_shaman1`.
+  profile_banner: z.string().nullable().optional(),
   thumbnail_url: z.string().optional(),
   last_crawled_at: z.string().optional(),
-  // `guild`
-  guild: z.object({ name: z.string() }).nullable().optional(),
+  // `guild`: its realm is the display name, like the character's.
+  guild: z.object({ name: z.string(), realm: z.string().optional() }).nullable().optional(),
   // `gear`: items keyed by slot (`head`, `finger1`, `mainhand`, …).
   gear: z
     .object({
@@ -90,6 +99,11 @@ export const raiderIoCharacterSchema = z.object({
   mythic_plus_scores_by_season: z.array(seasonScoreSchema).optional(),
   mythic_plus_ranks: z.record(z.string(), asIs).optional(),
   mythic_plus_best_runs: z.array(bestRunSchema).optional(),
+  // The last 10 runs, and the highest keys: of the season, of this week and of last week.
+  mythic_plus_recent_runs: z.array(bestRunSchema).optional(),
+  mythic_plus_highest_level_runs: z.array(bestRunSchema).optional(),
+  mythic_plus_weekly_highest_level_runs: z.array(bestRunSchema).optional(),
+  mythic_plus_previous_weekly_highest_level_runs: z.array(bestRunSchema).optional(),
 });
 
 export type RaiderIoCharacterPayload = z.infer<typeof raiderIoCharacterSchema>;

@@ -17,7 +17,18 @@ export interface RaidEncounter {
 export interface CatalogueRaid {
   slug: string;
   name: string;
+  /** Raider.io's expansion id: 10 = The War Within, 11 = Midnight. */
+  expansionId: number;
   encounters: RaidEncounter[];
+}
+
+/**
+ * The lowest score in a region's top 0.1% and top 1% of a season, from
+ * Raider.io's cutoffs as Rankwarden stores them. Null where none is recorded.
+ */
+export interface TopPercentCutoffs {
+  p999: number | null;
+  p990: number | null;
 }
 
 /** A Mythic+ season as the catalogue holds it: `season-mn-2`, its name and its dungeons. */
@@ -26,6 +37,9 @@ export interface CatalogueMplusSeason {
   name: string;
   /** Raider.io dungeon ids, as `mplus_dungeons.id`. */
   dungeonIds: number[];
+  expansionId: number;
+  /** By region. They move through a live season; Rankwarden re-reads them every M+ pass. */
+  cutoffs: Partial<Record<string, TopPercentCutoffs>>;
 }
 
 export interface PveCatalogueSnapshot {
@@ -41,10 +55,18 @@ interface RaidDocument extends CatalogueRaid {
   starts?: Record<string, Date>;
 }
 
-interface MplusSeasonDocument extends CatalogueMplusSeason {
-  expansionId: number;
-  starts?: Record<string, Date>;
+/** A quantile cutoff in `mplus_seasons.cutoffs.<region>.quantiles`; `all` is both factions. */
+interface QuantileCutoff {
+  all?: { minScore?: number | null } | null;
 }
+
+interface MplusSeasonDocument extends Omit<CatalogueMplusSeason, 'cutoffs'> {
+  starts?: Record<string, Date>;
+  cutoffs?: Record<string, { quantiles?: { p999?: QuantileCutoff; p990?: QuantileCutoff } }>;
+}
+
+const minScoreOf = (cutoff: QuantileCutoff | undefined): number | null =>
+  cutoff?.all?.minScore ?? null;
 
 /** The earliest start across regions, for ordering; 0 when none is recorded. */
 function firstStart(starts: Record<string, Date> | undefined): number {
@@ -68,9 +90,10 @@ const newestFirst = (
  * passed, on the next call. A failed read keeps the previous catalogue and is
  * retried on the next call; only a replica that has never read one fails.
  *
- * Only what character lookups need is kept: slugs, names, a raid's bosses and
- * a season's dungeon ids. Raid rankings, cutoffs and archive progress — most
- * of the documents' size — are never read.
+ * Only what character lookups need is kept: slugs, names, expansions, a raid's
+ * bosses, a season's dungeon ids and its top 0.1% / 1% scores. Raid rankings,
+ * keystone-title cutoffs and archive progress — most of the documents' size —
+ * are never read.
  */
 @Injectable()
 export class PveCatalogue implements OnApplicationBootstrap {
@@ -136,6 +159,14 @@ export class PveCatalogue implements OnApplicationBootstrap {
     return (await this.raids()).find((raid) => raid.slug === slug) ?? null;
   }
 
+  /** The raids of the newest expansion that has any. */
+  async currentExpansionRaids(): Promise<CatalogueRaid[]> {
+    const raids = await this.raids();
+    const newest = Math.max(...raids.map((raid) => raid.expansionId));
+
+    return raids.filter((raid) => raid.expansionId === newest);
+  }
+
   async mplusSeason(slug: string): Promise<CatalogueMplusSeason | null> {
     return (await this.mplusSeasons()).find((season) => season.slug === slug) ?? null;
   }
@@ -156,7 +187,21 @@ export class PveCatalogue implements OnApplicationBootstrap {
         .find(
           {},
           {
-            projection: { _id: 0, slug: 1, name: 1, dungeonIds: 1, expansionId: 1, starts: 1 },
+            // The quantile cutoffs only: the keystone-title ones and fetch bookkeeping
+            // next to them are not needed.
+            projection: {
+              _id: 0,
+              slug: 1,
+              name: 1,
+              dungeonIds: 1,
+              expansionId: 1,
+              starts: 1,
+              'cutoffs.us.quantiles': 1,
+              'cutoffs.eu.quantiles': 1,
+              'cutoffs.kr.quantiles': 1,
+              'cutoffs.tw.quantiles': 1,
+              'cutoffs.cn.quantiles': 1,
+            },
           },
         )
         .toArray(),
@@ -167,12 +212,23 @@ export class PveCatalogue implements OnApplicationBootstrap {
       raids: raids.sort(newestFirst).map((raid) => ({
         slug: raid.slug,
         name: raid.name,
+        expansionId: raid.expansionId,
         encounters: (raid.encounters ?? []).map(({ id, slug, name }) => ({ id, slug, name })),
       })),
       mplusSeasons: seasons.sort(newestFirst).map((season) => ({
         slug: season.slug,
         name: season.name,
         dungeonIds: season.dungeonIds ?? [],
+        expansionId: season.expansionId,
+        cutoffs: Object.fromEntries(
+          Object.entries(season.cutoffs ?? {}).map(([region, cutoff]) => [
+            region,
+            {
+              p999: minScoreOf(cutoff.quantiles?.p999),
+              p990: minScoreOf(cutoff.quantiles?.p990),
+            },
+          ]),
+        ),
       })),
       loadedAt: loadedAt.toISOString(),
     };

@@ -262,6 +262,10 @@ export const envSchema = z.object({
     'profile/wow/character/{realmSlug}/{characterName}/achievements',
     ['realmSlug', 'characterName'],
   ),
+  BLIZZARD_PATH_CHARACTER_RAID_ENCOUNTERS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/encounters/raids',
+    ['realmSlug', 'characterName'],
+  ),
   BLIZZARD_PATH_CHARACTER_ACHIEVEMENT_STATISTICS: pathTemplate(
     'profile/wow/character/{realmSlug}/{characterName}/achievements/statistics',
     ['realmSlug', 'characterName'],
