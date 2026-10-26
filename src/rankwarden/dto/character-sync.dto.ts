@@ -10,8 +10,11 @@ import { REGIONS } from '../../blizzard/blizzard.constants.js';
 
 const namedRef = z.object({ id: z.number().int(), name: z.string() });
 
+/**
+ * One ladder's standing. No `rank`: only the leaderboard carries it, and
+ * Rankwarden keeps the rank its sweep stored rather than take one from here.
+ */
 const bracketStats = z.object({
-  rank: z.number().int(),
   rating: z.number().int(),
   played: z.number().int().nonnegative().default(0),
   won: z.number().int().nonnegative().default(0),

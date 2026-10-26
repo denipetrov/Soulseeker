@@ -81,10 +81,23 @@ Same as Rankwarden, on purpose: Node 24 (engines ≥ 22), TypeScript 6 strict ES
 | `HealthModule` | `/health`, `/health/ready` |
 
 `configureApp()` (`src/configure-app.ts`) is shared by `main.ts` and the test harness.
-It sets up the middleware in this order: trust proxy, request logging, helmet, **the OIDC
-provider at `/oidc`**, then CORS for the API. The provider must be mounted before Nest
-registers its body parsers in `init()`, because oidc-provider parses its own form
-bodies. It also answers its own CORS, which is why the API's CORS layer comes after it.
+It sets up the middleware in this order: trust proxy, request logging, response
+compression, helmet, **the OIDC provider at `/oidc`**, then CORS for the API. The provider
+must be mounted before Nest registers its body parsers in `init()`, because oidc-provider
+parses its own form bodies. It also answers its own CORS, which is why the API's CORS
+layer comes after it.
+
+**Response compression** (`compression` middleware, in the same file):
+
+- Brotli for clients that accept it, gzip for the rest, chosen by `Accept-Encoding`; the
+  response carries `Vary: Accept-Encoding`. Brotli runs at quality 4, the library's default.
+- Measured on real answers: an 850 KB boss kill becomes 68 KB (brotli, ~3 ms) or 128 KB
+  (gzip, ~8 ms); a 356 KB guild roster becomes 22 KB.
+- Answers under 1 KB are sent as they are.
+- `/health*` (probes gain nothing) and `/oidc*` (small answers that carry tokens) are
+  never compressed.
+- Every endpoint gets it, the docs included. A CDN or gateway added later can pass the
+  compressed answers through.
 
 ## 3. Upstream budgets
 
@@ -273,6 +286,222 @@ The response and its fields:
   enriched the character. A class filter there leaves the others out, and today every
   EU 3v3 row is unenriched, so `class=` returns nothing for EU.
 
+### PvP character
+
+`GET /pvp/character?region=&realmSlug=&characterName=[&locale=en_US][&forceRefresh=true]`
+(`src/pvp/character/`). One character, from Blizzard's Profile API.
+
+- **Parameters.** Region, realm slug and name are all required. The name is NFC-normalised
+  and lowercased, letters only, 2–12 of them. `locale` is one of `LOCALES`
+  (`blizzard.constants.ts`) and defaults to `en_US`.
+- **Blizzard calls.** A full page costs 8 + one per ladder (~14):
+  - `core`, the same in every language, always read in `en_US`: character-media,
+    pvp-summary, one pvp-bracket per ladder it lists, statistics, achievements and
+    achievement statistics;
+  - `localized`, per language: profile, specializations and equipment.
+  - pvp-summary lists exactly the ladders played this season, per-spec Shuffle and Blitz
+    included, so nothing is spent on ladders the character never played.
+- **Cache.** The two parts are cached apart, `pvp:character:<region>:<realm>:<name>:core`
+  and `…:locale:<locale>`, so a second language costs 3 requests.
+  - A part is fresh for `PVP_CHARACTER_CACHE_TTL_SECONDS` (6 h), judged by its own
+    `fetchedAt`. Redis keeps it `PVP_CHARACTER_STALE_SECONDS` (24 h) longer.
+  - There is a single flight per part on each replica.
+  - `forceRefresh` claims `refresh:pvp:character:<id>` (`RefreshCooldown`) with `SET NX EX`
+    (`PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS`, 300). While the claim is held, it is
+    ignored and the cache answers. Without Redis it is refused.
+- **Failures.**
+  - A profile 404 is a 404. Any other part's 404 makes that part null.
+  - Any other failure fails the load, so a page is never cached with a gap. The kept
+    copy is then served with `stale: true` if both parts exist. Otherwise a spent budget
+    is a 503 with `Retry-After: 60`, and anything else a 502.
+- **Payload sizes.** Achievements (~2 MB) are cut down to the PvP history before caching.
+  Specializations (~500 KB) keep only each spec's active loadout and PvP talents.
+  Equipped items keep only `item`, `slot`, `name`, `media`, `level`, `quality`,
+  `bonus_list`, `enchantments`, `sockets`, `set`, `transmog`, `limit_category` and
+  `spells`: stats, armor, prices and requirements are dropped. Blizzard's API links
+  (`_links`, `key.href`) are stripped everywhere. On a real character, `core` is ~45 KB
+  and `localized` ~95 KB (equipment ~21 KB).
+- **Embellishments** carry `limit_category` (`Unique-Equipped: Embellished (2)`) and their
+  effect in `spells`. Other items carry a `limit_category` too, such as the Gladiator's
+  Medallion. The text is in the requested language.
+- **Statistics.** Avoidance and speed have no `value`, so their `rating_bonus` stands in.
+  `versatility` is the rating behind `versatilityDamageDoneBonus`.
+- **Ladders.**
+  - `rounds` is Solo Shuffle's round record (`season_round_statistics`); `played` / `won` /
+    `lost` are matches. It is null on every other ladder.
+  - `rank` is read from Rankwarden's `characters.brackets.<ladder>.rank` on every answer
+    and never cached, because ranks move hourly. It is one lookup by season, region and
+    character id. It is null when Rankwarden does not track the character or ladder, or
+    when the read fails.
+- **Highest ratings** (`highestRatings`) are achievement statistics 370, 595 and 596 (2v2,
+  3v3, 5v5 personal), matched by id. Blizzard has none for RBG, Shuffle or Blitz. A 0, or
+  Blizzard's 2^32 − 2 "never set", becomes null.
+- **PvP history** (`pvp-history.ts`) is parsed from English names, account-wide:
+  - **Tiers.** `<Tier>[ I| II]: [<Expansion> ]Season <N>`, where the tier is Combatant,
+    Challenger, Rival, Duelist, Elite, Gladiator, Legend, Strategist or Battle Mender.
+    This covers Warlords to now and `Challenger: Season 14`.
+  - **Rank 1.** Recognised by the achievement ids in Rankwarden's season rewards, which
+    give the season and ladder. One id shared by several spec ladders stands for the
+    family (`shuffle`). For seasons Rankwarden lacks, recognised by name: `<Prefix>
+    Gladiator|Legend: …`, `Hero of the Alliance|Horde: <Prefix>`.
+  - **`seasonId`.** For a tier, the Rankwarden season whose start is the latest before
+    `completed_timestamp`; null before season 27.
+  - **`earnedByThisCharacter`** is `criteria.is_completed`. Other entries were earned by
+    another character on the account.
+  - Look-alikes such as `Scholomance Challenger`, `Challenge Warlord: Gold` and
+    `Cruel Elite` are ignored.
+- **Sync.** Only when `core` was fetched fresh, and on the next tick after the response:
+  - Every ladder from pvp-summary goes in `brackets`, without `rank`. Solo Shuffle sends
+    its rounds as `played` / `won` / `lost`: that is what Blizzard's leaderboard, and so
+    Rankwarden's sweep, counts.
+  - The profile goes too, but only for `en_US`, so Rankwarden never stores translated
+    names. Its fields are mapped as Rankwarden's enrichment maps them: `gender.type`,
+    `realm.name`, `active_title.display_string`.
+  - A character with no rating this season is not pushed.
+
+### PvE character
+
+`GET /pve/character?region=&realmSlug=&characterName=[&raidProgression=][&mplusSeasonScore=][&forceRefresh=true]`
+(`src/pve/character/`). One character, from Raider.io's `characters/profile`, with per-boss
+kills from Blizzard's `encounters/raids`.
+
+- **Parameters.** Region (`cn` too), realm slug and name are required, with the same rules as
+  PvP (`src/characters/dto/character-identity.ts`). There is no locale: Raider.io answers in
+  English and the front end translates.
+  - `raidProgression` must be a raid and `mplusSeasonScore` a season in the `PveCatalogue`.
+    Otherwise the answer is a 400, and Raider.io is not asked.
+- **What is asked for.** Each answer is one Raider.io request, for the fields of the parts it
+  is missing:
+  - **Whole page**, when neither parameter is given:
+    - `gear`, `talents:categorized` and `guild`;
+    - `raid_progression:current-expansion`, and `raid_achievement_curve:<…>` for the current
+      expansion's raids from the catalogue;
+    - `mythic_plus_scores_by_season:current:previous` (current first) and `mythic_plus_ranks`;
+    - `mythic_plus_best_runs:all`, `mythic_plus_recent_runs`, `mythic_plus_highest_level_runs`,
+      `mythic_plus_weekly_highest_level_runs` and
+      `mythic_plus_previous_weekly_highest_level_runs`.
+  - **`raidProgression=<slug>`**: `raid_progression:<slug>` and `raid_achievement_curve:<slug>`.
+  - **`mplusSeasonScore=<slug>`**: `mythic_plus_scores_by_season:<slug>`.
+  - Both parameters may be given together.
+- **What is kept.**
+  - **Base profile, in every answer:** name, race, class, active spec and role, gender,
+    faction, realm (its display name), region, thumbnail, achievement points, profile banner,
+    profile URL and `lastCrawledAt`.
+  - **Gear:** `item_level_equipped`, and per slot `item_id`, `item_level`, `name`, `icon`,
+    `item_quality`, `tier`, `bonuses`, `enchants_detail` and `gems_detail`.
+  - **Talents:** the whole `talentLoadout` (~34 KB). **Guild:** its name and realm.
+  - **Raids:** everything Raider.io returns, keyed by raid slug. The curve is
+    `[{ raid, aotc?, cutting_edge? }]`, and empty when neither was earned.
+  - **Scores:** `season`, `scores`, and `colors` (each score's colour from Raider.io's
+    `segments`). **Ranks:** everything.
+  - **Top 0.1% / 1%:** `topPercent` on each score is worked out on every answer, not cached.
+    It compares `scores.all` with the region's `p999` / `p990` minimum score in the
+    catalogue: `{ percent: 0.1 | 1, minScore }`, or null below 1% or without cutoffs.
+  - **Runs (all five lists)** drop `keystone_run_id`, `map_challenge_mode_id`, `short_name`,
+    `zone_expansion_id` and `zone_id`. They keep `par_time_ms`, so the front end can show
+    the time left. Affixes keep only `id`, `icon_url` and `wowhead_url`; the rest is in
+    `mplus_affixes`. The spec keeps only its `id`.
+- **Raid bosses** (`raidBosses`, for the whole page's current raids or the one asked for):
+  - One Blizzard request (`encounters/raids`, in English), cached as
+    `pve:character:<…>:bosses` for every catalogue raid (~9 KB). The page and every raid
+    widget share it.
+  - Bosses are matched to the catalogue's encounters by name, because Blizzard's encounter
+    ids are not Raider.io's and `tier-mn-1` spans several Blizzard instances. The full
+    name is tried first, then the short form (no leading "The", nothing after a comma):
+    Blizzard's "Sikran, Captain of the Sureki" is Raider.io's "Sikran". On a real character
+    every boss killed in the last two expansions matched.
+  - Each boss has `kills` per `lfr` / `normal` / `heroic` / `mythic`: `{ count, lastKillAt }`.
+    A boss never killed has `{}`.
+  - Extra, not essential: a Blizzard failure serves the kept copy however old, or null, and
+    never fails the page. China has no Blizzard API, so it is always null there. A season-only
+    answer has no `raidBosses` field.
+- **Cache.** One entry per part: `pve:character:<region>:<realm>:<name>:full`, `…:raid:<slug>`,
+  `…:season:<slug>` and `…:bosses`. A widget never pays for the page, nor the page for a
+  widget.
+  - A part is fresh for `PVE_CHARACTER_CACHE_TTL_SECONDS` (1 h) and kept
+    `PVE_CHARACTER_STALE_SECONDS` (24 h) longer.
+  - `forceRefresh` goes through `RefreshCooldown` (`refresh:pve:character:<id>`,
+    `PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS`) and refetches the bosses too.
+  - There is a single flight per field set, and for the bosses, on each replica.
+- **Failures.** Raider.io's 400 ("no such character") is a 404. Otherwise, as for PvP: stale
+  if every Raider.io part asked for is kept, else 503 with `Retry-After: 60` for a spent
+  budget and 502 for anything else.
+- **Sync.** After a fresh whole page only, and on the next tick, the current season's best
+  runs go to `POST /mplus/characters/sync`:
+  - The season is the first one in `mythic_plus_scores_by_season`, which is the current one.
+  - The dungeon is `zone_id`, the name, the slug from the run's url and `short_name`.
+  - `timeRemainingMs` is `par_time_ms − clear_time_ms`.
+  - Runs whose dungeon is not in the season's `dungeonIds` (from the catalogue) are left
+    out, since one of them makes Rankwarden refuse the whole request.
+  - The profile sends class, spec, race and role. The base profile's `HEALING` / `TANK` /
+    `DPS` is spelled `healer` / `tank` / `dps`, as runs and Rankwarden spell it.
+  - Nothing is pushed without a run in the season.
+
+### PvE guild
+
+`GET /pve/guild?region=&realmSlug=&guildName=[&showFullRoster=true | &raidEncounters=&difficulty=[&boss=]][&forceRefresh=true]`
+(`src/pve/guild/`, in `PveModule`). One guild, from Raider.io's `guilds/profile` and
+`guilds/boss-kill` (`RaiderIoGuildApi`).
+
+- **Parameters.**
+  - `region` (`cn` too), `realmSlug` and `guildName` are required, as for characters. The name is
+    NFC-normalised, lowercased and has its spaces collapsed; it allows letters, spaces,
+    apostrophes and hyphens, 2–24 characters.
+  - `difficulty` is spirit-link's `RaidDifficulty` (`normal`, `heroic`, `mythic`); Raider.io
+    ranks no LFR.
+  - `raidEncounters` must be a catalogue raid and `boss` one of its encounters' slugs.
+    Otherwise the answer is a 400, and Raider.io is not asked.
+- **One widget per call.** Exactly one of the following; any other combination is a 400:
+  - **Summary** (no options): `raid_progression:current-expansion`,
+    `raid_rankings:current-expansion` and `members`. Only the members of ranks 0 and 1 are
+    kept, guild master first: 99 of 948 for a large guild, ~39 KB.
+  - **`showFullRoster=true`**: `members`, every one (~350 KB for 948 members). **Never
+    cached**, so each call is one Raider.io request; concurrent calls share one per replica.
+  - **`raidEncounters` + `difficulty`**: `raid_encounters:<raid>:<difficulty>`, each boss
+    killed with `defeatedAt`, in kill order. Empty when none.
+  - **`raidEncounters` + `boss` + `difficulty`**: `guilds/boss-kill`, returned as it comes.
+    `kill` holds the times, duration and the group's item level. `roster` holds every
+    player with talents, items and auras, ~850 KB for 20 players. Raider.io answers `{}` for
+    a boss not killed yet, which becomes `kill: null, roster: []`.
+- **Cache.**
+  - `guild:<region>:<realm>:<name>:summary` and `…:raid:<raid>:<difficulty>` are fresh for
+    `GUILD_CACHE_TTL_SECONDS` (1 h).
+  - `…:boss:<raid>:<boss>:<difficulty>` is fresh for `GUILD_BOSS_KILL_CACHE_TTL_SECONDS`
+    (24 h), since a kill is history. A boss not killed yet keeps only the shorter TTL.
+  - Every part is kept `GUILD_STALE_SECONDS` (24 h) longer. `forceRefresh` goes through
+    `RefreshCooldown` (`refresh:guild:<id>`, `GUILD_REFRESH_COOLDOWN_SECONDS`).
+- **Failures.** Raider.io's 400 ("Could not find requested guild") is a 404, for every
+  widget, and nothing is cached. Otherwise the kept part is served stale; without one, a
+  spent budget is a 503 with `Retry-After: 60` and anything else a 502. The roster has
+  nothing kept, so it always fails that way.
+- **No sync.** Rankwarden has no guild sync endpoint; its `guilds` are only written by its
+  raid rankings job.
+
+### PvE catalogue
+
+`PveCatalogue` (`src/seasons/pve-catalogue.service.ts`, exported by `SeasonsModule`) holds
+every raid and Mythic+ season Rankwarden catalogues, for the PvE character lookups.
+
+- **What it keeps.**
+  - From `raids`: each raid's `slug`, `name`, `expansionId` and `encounters` (`id`, `slug`,
+    `name`, in boss order).
+  - From `mplus_seasons`: each season's `slug`, `name`, `expansionId`, `dungeonIds`, and
+    `cutoffs` per region. A region's cutoffs are the top 0.1% (`p999`) and top 1% (`p990`)
+    minimum scores, from `cutoffs.<region>.quantiles.*.all.minScore`.
+  - A projection keeps raid rankings, keystone-title cutoffs and archive progress from ever
+    being read.
+- **Order.** Newest expansion first, then the latest to open within it, by the earliest
+  regional start. Unlisted entries are kept, since a character's history may name them.
+- **In memory, per replica.** It is read at startup (`onApplicationBootstrap`), then again
+  on the first call after `PVE_CATALOGUE_TTL_SECONDS` (a day). There is a single flight
+  per replica. The top-percent cutoffs move through a live season, so they can be up to a
+  day behind Rankwarden.
+  - A failed reload keeps the last catalogue and is retried on the next call.
+  - A failure at startup is logged and does not stop the boot. Only a replica that has
+    never read the catalogue fails a call.
+- **API.** `catalogue()`, `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
+  `raidSlugs()`, `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
@@ -284,6 +513,8 @@ The response and its fields:
   `withRunId(RunKind.Sync, …)` for log correlation.
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
+- PvP brackets carry no `rank`: only the leaderboard has one, and Rankwarden keeps what its
+  sweep stored.
 
 ### Spec representation
 

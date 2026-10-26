@@ -242,6 +242,34 @@ export const envSchema = z.object({
     'profile/wow/character/{realmSlug}/{characterName}/pvp-bracket/{bracket}',
     ['realmSlug', 'characterName', 'bracket'],
   ),
+  BLIZZARD_PATH_CHARACTER_MEDIA: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/character-media',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_PVP_SUMMARY: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/pvp-summary',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_STATISTICS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/statistics',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_EQUIPMENT: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/equipment',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_ACHIEVEMENTS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/achievements',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_RAID_ENCOUNTERS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/encounters/raids',
+    ['realmSlug', 'characterName'],
+  ),
+  BLIZZARD_PATH_CHARACTER_ACHIEVEMENT_STATISTICS: pathTemplate(
+    'profile/wow/character/{realmSlug}/{characterName}/achievements/statistics',
+    ['realmSlug', 'characterName'],
+  ),
   /**
    * Short, because a person is waiting on the answer: a lookup that takes
    * longer than this is better served stale from Mongo than late.
@@ -259,6 +287,8 @@ export const envSchema = z.object({
   RAIDERIO_API_BASE_URL: baseUrl('https://raider.io/api/v1'),
   RAIDERIO_REGIONS: csvOf<RaiderIoRegion>('us,eu,kr,tw,cn', RAIDERIO_REGIONS, 'region'),
   RAIDERIO_PATH_CHARACTER_PROFILE: pathTemplate('characters/profile'),
+  RAIDERIO_PATH_GUILD_PROFILE: pathTemplate('guilds/profile'),
+  RAIDERIO_PATH_GUILD_BOSS_KILL: pathTemplate('guilds/boss-kill'),
   RAIDERIO_REQUEST_TIMEOUT_MS: positiveInt(10_000),
   RAIDERIO_RETRY_LIMIT: nonNegativeInt(1),
   RAIDERIO_MINUTE_LIMIT: positiveInt(1_000),
@@ -322,6 +352,43 @@ export const envSchema = z.object({
   PVP_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
   /** How long one leaderboard page is reused. Rankwarden rewrites the ladders hourly. */
   LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(60),
+  /**
+   * How long a PvP character page is served without asking Blizzard again. One
+   * page costs about 13 Blizzard requests, so this is long on purpose.
+   */
+  PVP_CHARACTER_CACHE_TTL_SECONDS: positiveInt(21_600),
+  /**
+   * How long an expired page is kept past its TTL, to be served marked stale
+   * when the Blizzard budget is spent.
+   */
+  PVP_CHARACTER_STALE_SECONDS: positiveInt(86_400),
+  /**
+   * How long a PvE character page is served without asking Raider.io again. One
+   * lookup is one Raider.io request, so this is shorter than the PvP page's.
+   */
+  PVE_CHARACTER_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long an expired PvE page is kept past its TTL, to be served stale. */
+  PVE_CHARACTER_STALE_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one PvE character. */
+  PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
+  /**
+   * How long a guild's summary and raid encounters are served without asking
+   * Raider.io again. The full roster is never cached.
+   */
+  GUILD_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** A boss kill is history: it does not change once it happened. */
+  GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
+  /** How long an expired guild part is kept past its TTL, to be served stale. */
+  GUILD_STALE_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one guild. */
+  GUILD_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
+  /**
+   * How long the raid and Mythic+ season catalogue is held in memory before it
+   * is read again. Rankwarden re-reads both once a day.
+   */
+  PVE_CATALOGUE_TTL_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one character. */
+  PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
 });
 
 const validatedEnvSchema = envSchema.superRefine((env, ctx) => {
