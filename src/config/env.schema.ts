@@ -287,6 +287,8 @@ export const envSchema = z.object({
   RAIDERIO_API_BASE_URL: baseUrl('https://raider.io/api/v1'),
   RAIDERIO_REGIONS: csvOf<RaiderIoRegion>('us,eu,kr,tw,cn', RAIDERIO_REGIONS, 'region'),
   RAIDERIO_PATH_CHARACTER_PROFILE: pathTemplate('characters/profile'),
+  RAIDERIO_PATH_GUILD_PROFILE: pathTemplate('guilds/profile'),
+  RAIDERIO_PATH_GUILD_BOSS_KILL: pathTemplate('guilds/boss-kill'),
   RAIDERIO_REQUEST_TIMEOUT_MS: positiveInt(10_000),
   RAIDERIO_RETRY_LIMIT: nonNegativeInt(1),
   RAIDERIO_MINUTE_LIMIT: positiveInt(1_000),
@@ -369,6 +371,17 @@ export const envSchema = z.object({
   PVE_CHARACTER_STALE_SECONDS: positiveInt(86_400),
   /** The shortest gap between two `forceRefresh` lookups of one PvE character. */
   PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
+  /**
+   * How long a guild's summary and raid encounters are served without asking
+   * Raider.io again. The full roster is never cached.
+   */
+  GUILD_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** A boss kill is history: it does not change once it happened. */
+  GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
+  /** How long an expired guild part is kept past its TTL, to be served stale. */
+  GUILD_STALE_SECONDS: positiveInt(86_400),
+  /** The shortest gap between two `forceRefresh` lookups of one guild. */
+  GUILD_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
   /**
    * How long the raid and Mythic+ season catalogue is held in memory before it
    * is read again. Rankwarden re-reads both once a day.

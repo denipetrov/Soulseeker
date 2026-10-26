@@ -81,10 +81,23 @@ Same as Rankwarden, on purpose: Node 24 (engines ≥ 22), TypeScript 6 strict ES
 | `HealthModule` | `/health`, `/health/ready` |
 
 `configureApp()` (`src/configure-app.ts`) is shared by `main.ts` and the test harness.
-It sets up the middleware in this order: trust proxy, request logging, helmet, **the OIDC
-provider at `/oidc`**, then CORS for the API. The provider must be mounted before Nest
-registers its body parsers in `init()`, because oidc-provider parses its own form
-bodies. It also answers its own CORS, which is why the API's CORS layer comes after it.
+It sets up the middleware in this order: trust proxy, request logging, response
+compression, helmet, **the OIDC provider at `/oidc`**, then CORS for the API. The provider
+must be mounted before Nest registers its body parsers in `init()`, because oidc-provider
+parses its own form bodies. It also answers its own CORS, which is why the API's CORS
+layer comes after it.
+
+**Response compression** (`compression` middleware, in the same file):
+
+- Brotli for clients that accept it, gzip for the rest, chosen by `Accept-Encoding`; the
+  response carries `Vary: Accept-Encoding`. Brotli runs at quality 4, the library's default.
+- Measured on real answers: an 850 KB boss kill becomes 68 KB (brotli, ~3 ms) or 128 KB
+  (gzip, ~8 ms); a 356 KB guild roster becomes 22 KB.
+- Answers under 1 KB are sent as they are.
+- `/health*` (probes gain nothing) and `/oidc*` (small answers that carry tokens) are
+  never compressed.
+- Every endpoint gets it, the docs included. A CDN or gateway added later can pass the
+  compressed answers through.
 
 ## 3. Upstream budgets
 
@@ -423,6 +436,46 @@ kills from Blizzard's `encounters/raids`.
   - The profile sends class, spec, race and role. The base profile's `HEALING` / `TANK` /
     `DPS` is spelled `healer` / `tank` / `dps`, as runs and Rankwarden spell it.
   - Nothing is pushed without a run in the season.
+
+### PvE guild
+
+`GET /pve/guild?region=&realmSlug=&guildName=[&showFullRoster=true | &raidEncounters=&difficulty=[&boss=]][&forceRefresh=true]`
+(`src/pve/guild/`, in `PveModule`). One guild, from Raider.io's `guilds/profile` and
+`guilds/boss-kill` (`RaiderIoGuildApi`).
+
+- **Parameters.**
+  - `region` (`cn` too), `realmSlug` and `guildName` are required, as for characters. The name is
+    NFC-normalised, lowercased and has its spaces collapsed; it allows letters, spaces,
+    apostrophes and hyphens, 2–24 characters.
+  - `difficulty` is spirit-link's `RaidDifficulty` (`normal`, `heroic`, `mythic`); Raider.io
+    ranks no LFR.
+  - `raidEncounters` must be a catalogue raid and `boss` one of its encounters' slugs.
+    Otherwise the answer is a 400, and Raider.io is not asked.
+- **One widget per call.** Exactly one of the following; any other combination is a 400:
+  - **Summary** (no options): `raid_progression:current-expansion`,
+    `raid_rankings:current-expansion` and `members`. Only the members of ranks 0 and 1 are
+    kept, guild master first: 99 of 948 for a large guild, ~39 KB.
+  - **`showFullRoster=true`**: `members`, every one (~350 KB for 948 members). **Never
+    cached**, so each call is one Raider.io request; concurrent calls share one per replica.
+  - **`raidEncounters` + `difficulty`**: `raid_encounters:<raid>:<difficulty>`, each boss
+    killed with `defeatedAt`, in kill order. Empty when none.
+  - **`raidEncounters` + `boss` + `difficulty`**: `guilds/boss-kill`, returned as it comes.
+    `kill` holds the times, duration and the group's item level. `roster` holds every
+    player with talents, items and auras, ~850 KB for 20 players. Raider.io answers `{}` for
+    a boss not killed yet, which becomes `kill: null, roster: []`.
+- **Cache.**
+  - `guild:<region>:<realm>:<name>:summary` and `…:raid:<raid>:<difficulty>` are fresh for
+    `GUILD_CACHE_TTL_SECONDS` (1 h).
+  - `…:boss:<raid>:<boss>:<difficulty>` is fresh for `GUILD_BOSS_KILL_CACHE_TTL_SECONDS`
+    (24 h), since a kill is history. A boss not killed yet keeps only the shorter TTL.
+  - Every part is kept `GUILD_STALE_SECONDS` (24 h) longer. `forceRefresh` goes through
+    `RefreshCooldown` (`refresh:guild:<id>`, `GUILD_REFRESH_COOLDOWN_SECONDS`).
+- **Failures.** Raider.io's 400 ("Could not find requested guild") is a 404, for every
+  widget, and nothing is cached. Otherwise the kept part is served stale; without one, a
+  spent budget is a 503 with `Retry-After: 60` and anything else a 502. The roster has
+  nothing kept, so it always fails that way.
+- **No sync.** Rankwarden has no guild sync endpoint; its `guilds` are only written by its
+  raid rankings job.
 
 ### PvE catalogue
 

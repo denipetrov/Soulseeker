@@ -82,6 +82,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20` | token | Which specs are played at or above a rating on one day; `getEarliestDate=true` adds the first day with data |
 | `GET /pvp/character?region=us&realmSlug=demon-soul&characterName=Manongauz&locale=en_US` | token | One PvP character from Blizzard: profile, ladders, talents, stats, equipment, render and PvP titles; cached 6 h, `forceRefresh=true` once per 5 min; pushes the ratings to Rankwarden |
 | `GET /pve/character?region=us&realmSlug=demon-soul&characterName=Manongauz` | token | One PvE character from Raider.io: gear, talents, guild, current raids, M+ scores, ranks and best runs; `raidProgression=<raid>` and/or `mplusSeasonScore=<season>` for just those; cached 1 h, `forceRefresh=true` once per 5 min; pushes the season's runs to Rankwarden |
+| `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | token | One guild from Raider.io, one widget per call: the summary (current raids' progression and rankings, ranks 0–1), `showFullRoster=true` (never cached), `raidEncounters=<raid>&difficulty=<difficulty>`, or the same plus `boss=<boss>` for that kill with its roster; cached 1 h, boss kills 24 h |
 | `GET /health` | none | Liveness: process only |
 | `GET /health/ready` | none | Readiness: 503 if MongoDB or Redis is down; upstreams only degrade it |
 
