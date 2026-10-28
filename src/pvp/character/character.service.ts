@@ -11,6 +11,7 @@ import type { CharacterDocument } from '../../characters/entities/character.enti
 import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
+import type { CharacterSyncInput } from '../../rankwarden/dto/character-sync.dto.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
@@ -35,7 +36,10 @@ import type { CharacterQuery } from './dto/character-query.dto.js';
  * `fetchedAt`, not the Redis TTL.
  *
  * Every time the core part is fetched fresh, the ratings and profile are
- * pushed to Rankwarden once the response has gone.
+ * pushed to Rankwarden before the answer is completed: one attempt, briefly
+ * waited on, because each ladder's `previousRating` is read back from
+ * Rankwarden afterwards and the sync's write is what sets it. A busy
+ * Rankwarden is retried in the background.
  */
 @Injectable()
 export class PvpCharacterService {
@@ -43,6 +47,7 @@ export class PvpCharacterService {
   private readonly ttlMs: number;
   private readonly keepSeconds: number;
   private readonly cooldownSeconds: number;
+  private readonly inlineSyncTimeoutMs: number;
   /** One Blizzard load per part at a time on this replica. */
   private readonly flights = new SingleFlight();
 
@@ -58,20 +63,27 @@ export class PvpCharacterService {
     this.ttlMs = ttlSeconds * 1000;
     this.keepSeconds = ttlSeconds + config.get('PVP_CHARACTER_STALE_SECONDS', { infer: true });
     this.cooldownSeconds = config.get('PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS', { infer: true });
+    this.inlineSyncTimeoutMs = config.get('RANKWARDEN_SYNC_INLINE_TIMEOUT_MS', { infer: true });
   }
 
   async character(query: CharacterQuery): Promise<PvpCharacterResponse> {
-    return this.withRanks(await this.page(query));
+    const { response, sync } = await this.page(query);
+
+    // Before reading back: the sync's write is what turns the stored rating
+    // into `previousRating`, so the answer must see it to be current.
+    if (sync) await this.syncBeforeReading(sync);
+
+    return this.withStandings(response);
   }
 
   /**
-   * Each ladder's rank, as Rankwarden's last sweep recorded it. Blizzard's
-   * per-ladder endpoint has none, and ranks move every hour, so they are read
+   * Each ladder's rank and previous rating, as Rankwarden holds them. Blizzard's
+   * per-ladder endpoint has neither, and both move every hour, so they are read
    * from MongoDB on every answer rather than cached: one indexed lookup by
    * `character_identity`. A failed read leaves them null instead of failing
    * the page.
    */
-  private async withRanks(response: PvpCharacterResponse): Promise<PvpCharacterResponse> {
+  private async withStandings(response: PvpCharacterResponse): Promise<PvpCharacterResponse> {
     if (response.seasonId === null || response.brackets.length === 0) return response;
 
     let stored: Pick<CharacterDocument, 'brackets'> | null;
@@ -85,7 +97,10 @@ export class PvpCharacterService {
         {
           projection: Object.fromEntries([
             ['_id', 0],
-            ...response.brackets.map(({ bracket }) => [`brackets.${bracket}.rank`, 1]),
+            ...response.brackets.flatMap(({ bracket }) => [
+              [`brackets.${bracket}.rank`, 1],
+              [`brackets.${bracket}.previousRating`, 1],
+            ]),
           ]),
         },
       );
@@ -99,11 +114,36 @@ export class PvpCharacterService {
       brackets: response.brackets.map((entry) => ({
         ...entry,
         rank: stored?.brackets?.[entry.bracket]?.rank ?? null,
+        previousRating: stored?.brackets?.[entry.bracket]?.previousRating ?? null,
       })),
     };
   }
 
-  private async page(query: CharacterQuery): Promise<PvpCharacterResponse> {
+  /**
+   * One attempt at the sync, waited on but briefly (`RANKWARDEN_SYNC_INLINE_
+   * TIMEOUT_MS`, no 409 retries), so the page reads Rankwarden after it.
+   *
+   * A busy Rankwarden (409: the sweep owns the documents) has written nothing,
+   * so it is retried in the background with the usual backoff, and this answer
+   * shows the standings as they were. Anything else is not retried: a timeout
+   * may still have landed, and writing again would make the previous rating
+   * the new one.
+   */
+  private async syncBeforeReading(sync: PendingSync): Promise<void> {
+    const outcome = await withRunId(RunKind.Sync, () =>
+      this.sync.pushPvpCharacter(sync.payload, {
+        retries: 0,
+        timeoutMs: this.inlineSyncTimeoutMs,
+      }),
+    );
+
+    this.logger.debug(`Sync ${sync.id}: ${outcome.status}`);
+    if (outcome.status === 'busy') this.retryAfterResponse(sync);
+  }
+
+  private async page(
+    query: CharacterQuery,
+  ): Promise<{ response: PvpCharacterResponse; sync: PendingSync | null }> {
     const ref: CharacterRef = {
       region: query.region,
       realmSlug: query.realmSlug,
@@ -125,7 +165,7 @@ export class PvpCharacterService {
     const needLocalized = forced || !this.isFresh(cachedLocalized);
 
     if (!needCore && !needLocalized) {
-      return responseOf(ref.region, cachedCore!, cachedLocalized!, false);
+      return { response: responseOf(ref.region, cachedCore!, cachedLocalized!, false), sync: null };
     }
 
     let core: CorePart;
@@ -139,7 +179,7 @@ export class PvpCharacterService {
           : cachedLocalized,
       ]);
     } catch (error) {
-      return this.fallback(ref, cachedCore, cachedLocalized, error);
+      return { response: this.fallback(ref, cachedCore, cachedLocalized, error), sync: null };
     }
 
     if (!localized) throw new NotFoundException('No such character');
@@ -149,9 +189,14 @@ export class PvpCharacterService {
     if (needLocalized) fresh.set(localizedKey, localized);
     await this.cache.setMany(fresh, this.keepSeconds);
 
-    if (needCore) this.pushAfterResponse(ref, core, localized);
+    // Fresh ratings are what Rankwarden is told about; a cached core part was
+    // pushed when it was fetched.
+    const payload = needCore ? syncPayloadOf(ref.region, core, localized) : null;
 
-    return responseOf(ref.region, core, localized, false);
+    return {
+      response: responseOf(ref.region, core, localized, false),
+      sync: payload ? { id: `${ref.region}/${ref.realmSlug}/${ref.characterName}`, payload } : null,
+    };
   }
 
   private isFresh(part: { fetchedAt: string } | null): boolean {
@@ -186,21 +231,23 @@ export class PvpCharacterService {
   }
 
   /**
-   * Hands the fresh ratings to Rankwarden. Started on the next turn of the
-   * event loop, after the response is on its way; the sync client never
-   * throws, and a 409 can keep it retrying for a while.
+   * Retries a sync Rankwarden was too busy for, with the full backoff. Started
+   * on the next turn of the event loop, after the response is on its way; the
+   * sync client never throws.
    */
-  private pushAfterResponse(ref: CharacterRef, core: CorePart, localized: LocalizedPart): void {
-    const payload = syncPayloadOf(ref.region, core, localized);
-    if (!payload) return;
-
+  private retryAfterResponse(sync: PendingSync): void {
     setImmediate(() => {
       void withRunId(RunKind.Sync, async () => {
-        const outcome = await this.sync.pushPvpCharacter(payload);
-        this.logger.debug(
-          `Sync ${ref.region}/${ref.realmSlug}/${ref.characterName}: ${outcome.status}`,
-        );
+        const outcome = await this.sync.pushPvpCharacter(sync.payload);
+        this.logger.debug(`Sync ${sync.id} retried: ${outcome.status}`);
       });
     });
   }
+}
+
+/** Fresh ratings this answer has to hand to Rankwarden. */
+interface PendingSync {
+  /** `region/realm/name`, for log lines. */
+  id: string;
+  payload: CharacterSyncInput;
 }

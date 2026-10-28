@@ -13,7 +13,13 @@ export interface FakeResponse {
   body?: unknown;
 }
 
-export type Route = (request: RecordedRequest) => FakeResponse | undefined;
+/**
+ * May be async: a route can hold its answer (to stand for a slow upstream) or
+ * do work first, as a fake Rankwarden writing to MongoDB before it answers.
+ */
+export type Route = (
+  request: RecordedRequest,
+) => FakeResponse | undefined | Promise<FakeResponse | undefined>;
 
 /**
  * One local HTTP server standing in for Blizzard, Raider.io and Rankwarden at
@@ -40,7 +46,12 @@ export class FakeUpstream {
       const recorded = await record(req);
       this.requests.push(recorded);
 
-      const response = this.routes.map((route) => route(recorded)).find(Boolean) ?? {
+      // Every route is still called, newest first, as before routes could be
+      // async: suites count calls inside routes that a newer one shadows.
+      const answers: (FakeResponse | undefined)[] = [];
+      for (const route of this.routes) answers.push(await route(recorded));
+
+      const response = answers.find(Boolean) ?? {
         status: 599,
         body: { error: `no fake route for ${recorded.method} ${recorded.path}` },
       };

@@ -102,6 +102,7 @@ export function currentEntry(
     lost: standing?.lost ?? null,
     faction,
     inTitleRange: inTitleRange(row.rating, season ? cutoffOf(season, row.bracket) : null, faction),
+    previousRating: standing?.previousRating ?? null,
     class: cls,
     spec,
     gender: lower(profile?.gender),

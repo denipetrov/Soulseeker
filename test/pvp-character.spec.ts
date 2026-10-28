@@ -138,6 +138,10 @@ beforeAll(async () => {
       BLIZZARD_PER_SECOND_LIMIT: '40',
       BLIZZARD_UTILISATION: '1',
       BLIZZARD_RETRY_LIMIT: '0',
+      // A held sync must not hold the page: the inline wait is short here, and
+      // a busy Rankwarden's background retries quick.
+      RANKWARDEN_SYNC_INLINE_TIMEOUT_MS: '300',
+      RANKWARDEN_SYNC_RETRY_BASE_MS: '20',
     },
   });
   ({ db, drop } = await openTestDatabase(app.dbName));
@@ -233,7 +237,83 @@ describe('GET /pvp/character', () => {
     expect(blizzard()).toHaveLength(FULL_LOOKUP);
   });
 
-  it('pushes every ladder to Rankwarden after responding, without a rank', async () => {
+  it('reads each previous rating after its own sync, as the sync left it', async () => {
+    await db
+      .collection('characters')
+      .updateOne(
+        { characterId: 203724421 },
+        { $set: { 'brackets.3v3.rating': 2093, 'brackets.3v3.previousRating': 2050 } },
+      );
+    // The fake Rankwarden does what the real one does on a sync, before it
+    // answers: the stored rating becomes the previous one.
+    app.upstream.route(async (request) => {
+      if (request.path !== '/rankwarden/characters/sync') return undefined;
+      await db
+        .collection('characters')
+        .updateOne(
+          { characterId: 203724421 },
+          { $set: { 'brackets.3v3.previousRating': 2093, 'brackets.3v3.rating': 2100 } },
+        );
+      return { status: 200, body: {} };
+    });
+
+    const { body } = await lookup();
+
+    // 2093 only if read after the sync: before it, the stored value was 2050.
+    expect(body.brackets.map((b: Json) => [b.bracket, b.rating, b.previousRating])).toEqual([
+      ['3v3', 2100, 2093],
+      // Not on Rankwarden's ladders yet: nothing stored to have been before.
+      ['shuffle-paladin-holy', 2729, null],
+    ]);
+    expect(syncs()).toHaveLength(1);
+  });
+
+  it('still reads them on a cached page, with no sync', async () => {
+    await lookup();
+    app.upstream.requests.length = 0;
+    await db
+      .collection('characters')
+      .updateOne({ characterId: 203724421 }, { $set: { 'brackets.3v3.previousRating': 1999 } });
+
+    const { body } = await lookup();
+
+    expect(syncs()).toHaveLength(0);
+    expect(body.brackets[0]).toMatchObject({ bracket: '3v3', previousRating: 1999 });
+  });
+
+  it('answers at once when Rankwarden is busy, and retries the sync after', async () => {
+    let calls = 0;
+    app.upstream.route((request) => {
+      if (request.path !== '/rankwarden/characters/sync') return undefined;
+      calls += 1;
+      return calls === 1 ? { status: 409, body: {} } : { status: 200, body: {} };
+    });
+
+    const { status } = await lookup();
+
+    expect(status).toBe(200);
+    // The answer waited for one attempt only; the retry follows on its own.
+    expect(await syncPosted(2)).toHaveLength(2);
+  });
+
+  it('answers within the inline wait when Rankwarden hangs, without a second sync', async () => {
+    app.upstream.route(async (request) => {
+      if (request.path !== '/rankwarden/characters/sync') return undefined;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      return { status: 200, body: {} };
+    });
+
+    const started = Date.now();
+    const { status } = await lookup();
+
+    expect(status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(1_500);
+    // A timeout may still land: it is not sent again.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(syncs()).toHaveLength(1);
+  });
+
+  it('pushes every ladder to Rankwarden, without a rank', async () => {
     await lookup();
 
     const [push] = await syncPosted();

@@ -140,7 +140,7 @@ beforeAll(async () => {
       faction: 'HORDE',
       profileStatus: 'ok',
       brackets: {
-        '3v3': { rank: 1, rating: 2600, played: 10, won: 7, lost: 3 },
+        '3v3': { rank: 1, rating: 2600, previousRating: 2550, played: 10, won: 7, lost: 3 },
         'shuffle-mage-fire': { rank: 1, rating: 2450, played: 60, won: 40, lost: 20 },
       },
       profile: profile('Mage', 'Fire', 'Sunfury'),
@@ -231,6 +231,7 @@ describe('GET /pvp/leaderboard — current season', () => {
       lost: 3,
       faction: 'horde',
       inTitleRange: true,
+      previousRating: 2550,
       class: 'mage',
       spec: 'fire',
       gender: 'female',

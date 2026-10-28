@@ -11,7 +11,18 @@ import { ZodError } from 'zod';
  */
 export function describeError(error: unknown): string {
   if (error instanceof ZodError) return `${error.issues.length} schema issues: ${zodIssues(error)}`;
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) {
+    if (error.message) return error.message;
+
+    // A connection refused on every address a host resolves to — `localhost`
+    // as both ::1 and 127.0.0.1 — arrives as an AggregateError with no message
+    // of its own; got wraps it with none either. Say what the inner ones say.
+    const inner = error instanceof AggregateError ? error.errors : [error.cause];
+    const parts = inner.filter((part) => part !== undefined).map((part) => describeError(part));
+    const code = (error as { code?: unknown }).code;
+
+    return parts.filter(Boolean).join('; ') || (typeof code === 'string' ? code : error.name);
+  }
 
   return String(error);
 }

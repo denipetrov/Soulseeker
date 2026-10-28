@@ -175,8 +175,9 @@ describe('the response', () => {
       lost: 1,
       specialization: { id: 65, name: 'Holy' },
       rounds: { played: 160, won: 95, lost: 65 },
-      // Ranks are read from Rankwarden per answer, never cached.
+      // Rank and previous rating are read from Rankwarden per answer, never cached.
       rank: null,
+      previousRating: null,
     });
     expect(response.brackets[0]).toMatchObject({ bracket: '3v3', rounds: null });
     expect(response.specializations?.specializations).toEqual([
