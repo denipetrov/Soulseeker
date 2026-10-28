@@ -275,6 +275,13 @@ The response and its fields:
   row.bracket)`). Where the cutoffs differ by faction, the character's faction decides.
   With no cutoff (2v2, no rewards recorded) it is false. The board-level `cutoff` is
   null for 2v2 and for a board mixing several specs.
+- **`previousRating`** (current season only, like the profile fields) is
+  `characters.brackets.<row.bracket>.previousRating`, which the enricher's batch read
+  already fetches. It is Rankwarden's rating from before its latest write, equal to
+  `rating` when nothing moved, and null on a character's first appearance on the ladder
+  or with no character document. Archived rows have no such field (`archive_entries`
+  stores none), so the key is absent there. The cutoff endpoint's `characters` list
+  carries it too, through the same `BoardEnricher`.
 - **`rank`** is Blizzard's rank on the row's ladder. On a live all-specs Shuffle or Blitz
   board it is the rank within that spec, not the position. The front end orders by
   `rating` and numbers such a board itself.
@@ -285,6 +292,46 @@ The response and its fields:
 - **Enrichment gaps.** On 2v2, 3v3 and RBG, rows only have a class once Rankwarden has
   enriched the character. A class filter there leaves the others out, and today every
   EU 3v3 row is unenriched, so `class=` returns nothing for EU.
+
+### PvP title cutoffs
+
+`GET /pvp/cutoffs?region=&bracket=` (`src/pvp/cutoffs/`) returns the current season's
+title cutoffs for one ladder family, and how many characters of each spec are at or above
+them.
+
+- **`bracket`** is `3v3`, `rbg`, `shuffle` or `blitz`. 2v2 awards no title and is a 400.
+- **Cutoffs** come from the cached current season (`PvpSeasonsService.currentSeason`:
+  Rankwarden's `season_state`, or the archive once the season is final). `seasonName`,
+  `final` and `rewardsFetchedAt` come with them.
+- **Counts** are read live, not cached. `rating >= cutoff` is a short index range, and a
+  whole Shuffle answer reads ~600 index keys in ~45 ms.
+  - **3v3 and RBG:** one cutoff, the top-level `cutoff`. The qualifying rows are grouped
+    by the rows' `class` and `spec`, the active spec. Characters Rankwarden has not
+    enriched are one entry with a null class and spec. Every EU 3v3 row is in that entry
+    today.
+  - **Shuffle and Blitz:** a cutoff per spec ladder, set on each `specs[]` entry with its
+    title. There is one `countDocuments` per spec through `spec_board` (season, region,
+    class, spec, rating), all run together. A single `$or` aggregation over the 40 specs
+    was tried and scanned the whole region (125k keys, ~240 ms).
+  - A spec with a cutoff but nobody in range answers `count: 0`.
+- **Faction-split cutoffs.** Where these differ by faction (3v3 and RBG up to season 33,
+  never a live season since), the count uses the lower one: rating rows carry no faction.
+- **404** when the region has no current season, or no cutoffs recorded for the bracket
+  yet (early in a season, before Rankwarden has read them).
+- **With `class` and `spec`** (always together; a spec slug alone is ambiguous, as in
+  `holy`, `frost`, `restoration`, `protection`): no counts. It returns `characters`, the
+  spec's characters at or above the cutoff, best first.
+  - Each entry is built by `BoardEnricher` (`src/pvp/leaderboard/`), which the
+    leaderboard uses too, so an entry is byte-for-byte the leaderboard's for that
+    character. That was checked on real data for six specs.
+  - Not paged: a title cutoff is the top fraction of a percent of a ladder, a few dozen
+    characters per spec. `total` is the list's length.
+  - The cutoff counted against is the spec's own on Shuffle and Blitz, and the season's
+    on 3v3 and RBG.
+  - On 3v3 and RBG the spec is the active one, so only enriched characters can appear.
+  - A pair the season has no spec ladder for (`paladin` + `fire`, `mage` + `bogus`) is
+    404 on every bracket. The season's Shuffle and Blitz cutoffs serve as the list of
+    specs that exist. A real spec nobody reaches is 200 with `characters: []`.
 
 ### PvP character
 
@@ -329,10 +376,14 @@ The response and its fields:
 - **Ladders.**
   - `rounds` is Solo Shuffle's round record (`season_round_statistics`); `played` / `won` /
     `lost` are matches. It is null on every other ladder.
-  - `rank` is read from Rankwarden's `characters.brackets.<ladder>.rank` on every answer
-    and never cached, because ranks move hourly. It is one lookup by season, region and
-    character id. It is null when Rankwarden does not track the character or ladder, or
-    when the read fails.
+  - `rank` and `previousRating` are read from Rankwarden's `characters.brackets.<ladder>`
+    on every answer and never cached, because both move hourly. It is one lookup by
+    season, region and character id, made **after** the answer's own sync (below). Both
+    are null when Rankwarden does not track the character or ladder, or when the read
+    fails.
+  - `previousRating` is Rankwarden's rating from before its latest write, sweep or sync.
+    It equals `rating` when nothing moved. Rankwarden's sync rotates it, so a page that
+    fetched fresh ratings shows the rating before this very sync.
 - **Highest ratings** (`highestRatings`) are achievement statistics 370, 595 and 596 (2v2,
   3v3, 5v5 personal), matched by id. Blizzard has none for RBG, Shuffle or Blitz. A 0, or
   Blizzard's 2^32 − 2 "never set", becomes null.
@@ -350,7 +401,14 @@ The response and its fields:
     another character on the account.
   - Look-alikes such as `Scholomance Challenger`, `Challenge Warlord: Gold` and
     `Cruel Elite` are ignored.
-- **Sync.** Only when `core` was fetched fresh, and on the next tick after the response:
+- **Sync.** Only when `core` was fetched fresh, and **before** the standings are read
+  back, so `previousRating` reflects it:
+  - One attempt, waited on for at most `RANKWARDEN_SYNC_INLINE_TIMEOUT_MS` (3 s), with
+    no 409 retries.
+  - A busy Rankwarden (409) has written nothing, so the sync is retried in the
+    background with the full backoff, and the page shows the standings as they were.
+  - A timeout or other failure is not retried: it may still have landed, and writing
+    again would rotate `previousRating` a second time and hide the movement.
   - Every ladder from pvp-summary goes in `brackets`, without `rank`. Solo Shuffle sends
     its rounds as `played` / `won` / `lost`: that is what Blizzard's leaderboard, and so
     Rankwarden's sweep, counts.
@@ -509,8 +567,12 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
 - It validates against the mirrored DTOs, then POSTs to `RANKWARDEN_BASE_URL`.
 - It never throws. It returns `written`, `invalid` (400), `not-tracked` (404), `busy`
   (409 after `RANKWARDEN_SYNC_RETRY_LIMIT` retries, backoff `base × 2^n`) or `failed`.
-- Call it **after** responding to the front end. Wrap the call in
+- With default options a 409 retries for ~35 s, so a page must never wait on that. Push
+  after responding, or, as the PvP character page does to read `previousRating` back,
+  wait on one attempt only: `{ retries: 0, timeoutMs }`. Wrap the call in
   `withRunId(RunKind.Sync, …)` for log correlation.
+- Every sync is a write that rotates Rankwarden's `previousRating` (PvP) and
+  `previousMythicScore` (M+). Never send the same data twice "to be sure".
 - The PvP endpoint replaces every bracket at once, so send the whole document. The M+
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
 - PvP brackets carry no `rank`: only the leaderboard has one, and Rankwarden keeps what its

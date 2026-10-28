@@ -44,6 +44,14 @@ export interface PvpCharacterBracket {
    * answer, not cached; null when Rankwarden does not track the character or ladder.
    */
   rank: number | null;
+  /**
+   * The rating on this ladder before Rankwarden's latest write, read from
+   * `characters` like `rank` — and, when this answer fetched fresh ratings,
+   * read after this answer's own sync, so it is the rating before that.
+   * Equal to `rating` when nothing moved; null when Rankwarden does not track
+   * the character or ladder, or it is new on it.
+   */
+  previousRating: number | null;
 }
 
 /**

@@ -147,7 +147,9 @@ export function corePartOf(fetched: CoreFetch, fetchedAt: Date): CorePart {
       lost: payload.season_match_statistics?.lost ?? 0,
       specialization: payload.specialization ?? null,
       rounds: payload.season_round_statistics ?? null,
+      // Both from Rankwarden, filled in per answer by the service; never cached.
       rank: null,
+      previousRating: null,
     })),
     honor: fetched.summary
       ? {

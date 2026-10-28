@@ -16,7 +16,8 @@ import {
   type SpecFamily,
 } from '../seasons/pvp-season.types.js';
 import type { LeaderboardBracket, LeaderboardQuery } from './dto/leaderboard-query.dto.js';
-import { archivedEntry, currentEntry, type BoardCharacter } from './leaderboard.mapper.js';
+import { BoardEnricher, ROW_PROJECTION } from './board-enricher.service.js';
+import { archivedEntry } from './leaderboard.mapper.js';
 import type { LeaderboardResponse } from './leaderboard.types.js';
 
 /** The flat ratings collection each ladder family lives in. */
@@ -27,27 +28,6 @@ const RATING_COLLECTIONS: Record<LeaderboardBracket, ReadCollection> = {
   shuffle: Collections.RatingsShuffle,
   blitz: Collections.RatingsBlitz,
 };
-
-const ROW_PROJECTION = {
-  _id: 0,
-  characterId: 1,
-  bracket: 1,
-  rating: 1,
-  class: 1,
-  spec: 1,
-} as const;
-
-/** What enrichment needs of a profile, and nothing else: talent codes are kilobytes. */
-const PROFILE_PROJECTION = {
-  'profile.class.name': 1,
-  'profile.spec.name': 1,
-  'profile.heroTalentTree.name': 1,
-  'profile.talentLoadouts.spec.name': 1,
-  'profile.talentLoadouts.heroTalentTree.name': 1,
-  'profile.gender': 1,
-  'profile.level': 1,
-  'profile.race.name': 1,
-} as const;
 
 const ARCHIVE_PROJECTION = {
   _id: 0,
@@ -93,6 +73,7 @@ export class LeaderboardService {
     private readonly mongo: MongoService,
     private readonly cache: CacheService,
     private readonly seasons: PvpSeasonsService,
+    private readonly enricher: BoardEnricher,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('LEADERBOARD_CACHE_TTL_SECONDS', { infer: true });
@@ -162,45 +143,7 @@ export class LeaderboardService {
       ratings.countDocuments(filter),
     ]);
 
-    const characters = await this.charactersOf(rows, season);
-    const entries = rows.map((row) => currentEntry(row, characters.get(row.characterId), season));
-
-    return this.response(query, season, total, entries);
-  }
-
-  /** The characters of a page of rows, in one read, with only the ladders the page shows. */
-  private async charactersOf(
-    rows: readonly Pick<RatingRow, 'characterId' | 'bracket'>[],
-    season: PvpSeason,
-  ): Promise<Map<number, BoardCharacter>> {
-    if (rows.length === 0) return new Map();
-
-    const projection: Record<string, 0 | 1> = {
-      _id: 0,
-      characterId: 1,
-      characterName: 1,
-      realmSlug: 1,
-      faction: 1,
-      profileStatus: 1,
-      ...PROFILE_PROJECTION,
-    };
-    for (const bracket of new Set(rows.map((row) => row.bracket))) {
-      projection[`brackets.${bracket}`] = 1;
-    }
-
-    const docs = await this.mongo
-      .collection<BoardCharacter & { seasonId: number; region: string }>(Collections.Characters)
-      .find(
-        {
-          seasonId: season.seasonId,
-          region: season.region,
-          characterId: { $in: rows.map((row) => row.characterId) },
-        },
-        { projection },
-      )
-      .toArray();
-
-    return new Map(docs.map((doc) => [doc.characterId, doc as BoardCharacter]));
+    return this.response(query, season, total, await this.enricher.entries(rows, season));
   }
 
   private async archivedBoard(

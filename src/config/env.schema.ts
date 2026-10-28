@@ -307,6 +307,12 @@ export const envSchema = z.object({
   /** Retries of a 409 (the owning job is running), with backoff. */
   RANKWARDEN_SYNC_RETRY_LIMIT: nonNegativeInt(3),
   RANKWARDEN_SYNC_RETRY_BASE_MS: positiveInt(5_000),
+  /**
+   * How long a character page waits for its own sync before answering. The
+   * page reads `previousRating` after the sync, so it waits; but a person is
+   * behind it, so not for long, and only for one attempt.
+   */
+  RANKWARDEN_SYNC_INLINE_TIMEOUT_MS: positiveInt(3_000),
 
   // OAuth 2.0 authorization server (oidc-provider), mounted at /oidc.
   /** The issuer: the public URL of the /oidc mount, e.g. https://api.rankwarden.gg/oidc */

@@ -20,6 +20,13 @@ export interface NamedRef {
 export interface BracketStanding {
   rank: number;
   rating: number;
+  /**
+   * The rating stored on this ladder before Rankwarden's latest write — sweep
+   * or sync — whether or not it changed: equal to `rating` when the character
+   * held steady. Null the first time the character appears on the ladder, and
+   * absent on documents written before Rankwarden began recording it.
+   */
+  previousRating?: number | null;
   played: number;
   won: number;
   lost: number;

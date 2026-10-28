@@ -60,6 +60,7 @@ const EXAMPLE: PvpCharacterResponse = {
       specialization: { id: 65, name: 'Holy' },
       rounds: { played: 160, won: 95, lost: 65 },
       rank: 412,
+      previousRating: 2704,
     },
   ],
   honor: { level: 1991, honorableKills: 10516 },

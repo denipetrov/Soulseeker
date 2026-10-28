@@ -46,6 +46,24 @@ describe('describeError', () => {
     expect(describeError('just a string')).toBe('just a string');
     expect(describeError(undefined)).toBe('undefined');
   });
+
+  it('says what an empty-message AggregateError holds, as localhost refusing on ::1 and 127.0.0.1', () => {
+    const refused = new AggregateError([
+      new Error('connect ECONNREFUSED ::1:3000'),
+      new Error('connect ECONNREFUSED 127.0.0.1:3000'),
+    ]);
+
+    expect(describeError(refused)).toBe(
+      'connect ECONNREFUSED ::1:3000; connect ECONNREFUSED 127.0.0.1:3000',
+    );
+    // Wrapped once more with no message, as got does.
+    expect(describeError(new Error('', { cause: refused }))).toContain('ECONNREFUSED ::1:3000');
+  });
+
+  it('falls back to the code, then the name, when there is nothing else', () => {
+    expect(describeError(Object.assign(new Error(''), { code: 'ECONNRESET' }))).toBe('ECONNRESET');
+    expect(describeError(new TypeError(''))).toBe('TypeError');
+  });
 });
 
 describe('zodIssues', () => {

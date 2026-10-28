@@ -27,6 +27,13 @@ export interface LeaderboardEntry {
   /** The rating reaches the season's title cutoff for this ladder (and faction, where split). */
   inTitleRange: boolean;
 
+  /**
+   * The rating on this ladder before Rankwarden's latest write, as stored on
+   * `characters`: equal to `rating` when nothing moved, null on the character's
+   * first appearance on the ladder. Current season only, like the fields below;
+   * the front end compares it with `rating` to show movement.
+   */
+  previousRating?: number | null;
   class?: string | null;
   spec?: string | null;
   gender?: string | null;

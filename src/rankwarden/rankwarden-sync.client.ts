@@ -37,6 +37,18 @@ const Endpoint = {
 } as const;
 type Endpoint = (typeof Endpoint)[keyof typeof Endpoint];
 
+/** Overrides for one push. */
+export interface PushOptions {
+  /**
+   * Retries of a 409, in place of `RANKWARDEN_SYNC_RETRY_LIMIT`. 0 for a push
+   * a person is waiting on: a busy answer then comes back at once, and the
+   * caller can retry in the background.
+   */
+  retries?: number;
+  /** In place of `RANKWARDEN_TIMEOUT_MS`, for the same reason. */
+  timeoutMs?: number;
+}
+
 /**
  * Pushes fresh character data to Rankwarden between its own passes.
  *
@@ -72,15 +84,27 @@ export class RankwardenSyncClient {
     });
   }
 
-  pushPvpCharacter(input: CharacterSyncInput): Promise<SyncOutcome> {
-    return this.push(Endpoint.Pvp, characterSyncSchema, input);
+  pushPvpCharacter(input: CharacterSyncInput, options: PushOptions = {}): Promise<SyncOutcome> {
+    return this.push(Endpoint.Pvp, characterSyncSchema, input, options);
   }
 
-  pushMplusCharacter(input: MplusCharacterSyncInput): Promise<SyncOutcome> {
-    return this.push(Endpoint.Mplus, mplusCharacterSyncSchema, input);
+  pushMplusCharacter(
+    input: MplusCharacterSyncInput,
+    options: PushOptions = {},
+  ): Promise<SyncOutcome> {
+    return this.push(Endpoint.Mplus, mplusCharacterSyncSchema, input, options);
   }
 
-  private async push<T>(endpoint: Endpoint, schema: ZodType<T>, input: T): Promise<SyncOutcome> {
+  private async push<T>(
+    endpoint: Endpoint,
+    schema: ZodType<T>,
+    input: T,
+    options: PushOptions,
+  ): Promise<SyncOutcome> {
+    const retryLimit = options.retries ?? this.retryLimit;
+    const timeout =
+      options.timeoutMs === undefined ? {} : { timeout: { request: options.timeoutMs } };
+
     const parsed = schema.safeParse(input);
 
     if (!parsed.success) {
@@ -94,7 +118,9 @@ export class RankwardenSyncClient {
       const startedAt = Date.now();
 
       try {
-        const result = await this.client.post(endpoint, { json: parsed.data }).json<unknown>();
+        const result = await this.client
+          .post(endpoint, { json: parsed.data, ...timeout })
+          .json<unknown>();
         this.health.recordSuccess(UpstreamProvider.Rankwarden, endpoint, Date.now() - startedAt);
 
         return { status: 'written', result };
@@ -126,7 +152,7 @@ export class RankwardenSyncClient {
         if (status === 404) return { status: 'not-tracked', reason };
 
         if (status === 409) {
-          if (attempt >= this.retryLimit) {
+          if (attempt >= retryLimit) {
             this.logger.warn(`Sync ${endpoint} still busy after ${attempt + 1} attempts`);
             return { status: 'busy', reason };
           }
