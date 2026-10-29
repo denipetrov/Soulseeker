@@ -611,6 +611,33 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
 - **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
   `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
 
+#### History, for a graph over time
+
+`GET /pvp/spec-representation/history?region=&bracket=&rating=` returns each spec over
+the last `HISTORY_DAYS` (31) UTC days, today included, as drawn by sites like
+drustvar.com's "flavor of the month".
+
+- **Parameters.** The daily endpoint's `region`, `bracket` and `rating`, picked from its
+  schema so the two cannot drift. There is no date: the window always ends today (UTC).
+- **Response.** `from` and `to` are the window, for the axis. `days` lists only days
+  that have a snapshot, oldest first.
+  - Days are missing when Rankwarden did not write them: today before its daily run, a
+    day the job missed, or days before the current season, which Rankwarden deletes.
+    `days[0].date` is where the data starts.
+  - A spec is also missing from a day nobody played it on at that rating (EU Blitz 2700
+    has 39 specs one day and 40 the next); the graph treats it as 0.
+- **Per day:** `date`, `computedAt`, `total`, `classified`, and `specs`, most played
+  first. Each spec is exactly the daily endpoint's entry for that date, hero talents
+  included (`heroTalentsClassified`, `heroTalents[]`), checked on real data.
+- **Size.** Hero talents make up most of the payload: a full Shuffle month is ~265 KB
+  raw, against ~79 KB without them. The API compresses responses.
+- **Unenriched 2v2, 3v3 and RBG** days are still listed, with `classified: 0` and empty
+  `specs`.
+- **Reading.** One range read through `snapshot_identity` (date first), at most 31
+  documents. Not cached, like the daily endpoint. On a rollover day with two seasons,
+  the newer one wins.
+- **404** only when the whole window is empty.
+
 ### API docs
 
 `@nestjs/swagger` (`src/docs/`), served at `/docs` (`/docs/openapi.json`) only when
