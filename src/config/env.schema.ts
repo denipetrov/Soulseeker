@@ -359,6 +359,11 @@ export const envSchema = z.object({
   /** How long one leaderboard page is reused. Rankwarden rewrites the ladders hourly. */
   LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(60),
   /**
+   * How long one PvP tier list is reused. It reads every row above 1500 of a
+   * ladder, and a spec's place moves over days, not within the hour.
+   */
+  TIER_LIST_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /**
    * How long a PvP character page is served without asking Blizzard again. One
    * page costs about 13 Blizzard requests, so this is long on purpose.
    */

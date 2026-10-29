@@ -333,6 +333,70 @@ them.
     404 on every bracket. The season's Shuffle and Blitz cutoffs serve as the list of
     specs that exist. A real spec nobody reaches is 200 with `characters: []`.
 
+### PvP tier list
+
+`GET /pvp/tier-list?region=&bracket=` (`src/pvp/tier-list/`) scores each spec of the
+current season's ladder from 0 to 100 and cuts the specs into tiers. Any family: `2v2`,
+`3v3`, `rbg`, `shuffle`, `blitz`.
+
+- **Reads.** Two, run together on the family's `*_ratings` collection:
+  - the top 5,000 rows' class and spec, best first, through `board_order`;
+  - every row at or above 1500 with a spec, grouped by spec, with its count and mean
+    rating. That is ~63,000 rows on EU Shuffle, ~70 ms.
+- **Score** (`tier-list.scoring.ts`, pure and unit-tested):
+  - **Top tier density, 45 points.** The spec's rows in the top 250, 500, 1,000, 2,500
+    and 5,000 (cumulative), weighted 30/25/20/15/10 %. Each band is taken against the
+    spec that leads it (`count / max`), so the spec that leads every band gets all 45.
+  - **Representation, 35 points**, and **average rating, 20 points**, both from the rows
+    at or above 1500, are split by order (`rankPoints`): the highest spec gets all the
+    points, the lowest none, the rest evenly between. Ties share the mean of their places.
+- **Tiers** (`assignTiers`). Ordered by score (a tie by slug), the specs are split by four
+  lines. Each line starts at a baseline, `round(n × 0.10 / 0.35 / 0.65 / 0.90)` specs
+  from the top (40 specs give 4 / 10 / 12 / 10 / 4).
+  - From its baseline, each line moves up to `TIER_LINE_SLACK` (2) specs either way, to
+    the widest score drop between two neighbours in that window. Specs that score close
+    together then share a tier: on US Shuffle, Fire (80.58) and Restoration Druid (80.09)
+    are both S, with the line at the 14.6-point drop to Assassination.
+  - Equal drops (within 1e-9, as the scores are sums of fractions) go to the one nearer
+    the baseline, then the higher.
+  - A line stays below the one above it and short of the next one's baseline, so a tier
+    is empty only when its baseline is.
+  - Under 5 specs there is no S: 10 % rounds to none.
+  - Real sizes: US Shuffle 5 / 11 / 11 / 8 / 5, US 3v3 6 / 6 / 16 / 7 / 5.
+- **Specs.** Every pair in `ALL_SPECS` (`src/pvp/specs.ts`, 40 pairs by class) is always
+  on the list, so a spec nobody plays (a tank spec on Shuffle) is not dropped: it scores 0
+  on every factor and comes last.
+  - A spec with no rows gets no points from the by-order factors, rather than sharing the
+    bottom places with other empty specs.
+  - A spec found in the data but missing from the list (one Blizzard just added) is
+    still scored, and logged at warn, so the list can be updated. Keep `specs.ts` in step
+    with the game.
+  - A spec only in the top rows, below 1500 (on an RBG ladder, where the top 5,000 reaches
+    down to ~200), has `averageRating.value: null` and gets nothing there.
+- **Rounding.** `score` is rounded from the unrounded sum, so it can differ by 0.01 from
+  adding up the three rounded factor scores.
+- **Unclassified rows.** On 2v2, 3v3 and RBG, rows of characters Rankwarden has not
+  enriched have no spec. They hold their place in the top bands but count for no spec.
+  `topRows`, `topClassified` and `classified` say how much was known.
+- **Average rating is weighed by count.** A spec is ranked by `averageRating.adjusted`,
+  not by its plain mean (`value`):
+  `(count × mean + 50 × 1500) / (count + 50)` (`adjustedAverage`,
+  `AVERAGE_RATING_PRIOR_WEIGHT`). It is as if every spec had 50 more players at the 1500
+  floor.
+  - 1,000 players at 1800 stay ~1786; 5 at 1800 fall to ~1527. Every row is ≥ 1500, so
+    more players always helps.
+  - The floor is used rather than the ladder's mean on purpose: pulling toward the mean
+    would reward a small spec that sits below it.
+  - Before this, rank was by the plain mean and ignored count. 20 Protection Warriors at
+    1932 took 17 of 20 points on US Shuffle and outscored Feral (660 players) and Frost DK
+    (882). Now they adjust to ~1624 and score 2.
+  - 50 was chosen on real ladders: it keeps a typical 3v3 spec (~80 rows) mostly its own,
+    and pulls Shuffle and Blitz tank specs (3–30 rows) well down.
+- **Cache.** The whole list is cached per region, season and bracket for
+  `TIER_LIST_CACHE_TTL_SECONDS` (1 h), so `computedAt` stays the same until then. A ladder
+  with no spec at all, however many specs are listed, is a **404** and is not cached; so is a region without a current
+  season. The response is ~10 KB for Shuffle.
+
 ### PvP character
 
 `GET /pvp/character?region=&realmSlug=&characterName=[&locale=en_US][&forceRefresh=true]`
