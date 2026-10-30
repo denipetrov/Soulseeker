@@ -13,10 +13,13 @@ import { LeaderboardService } from './leaderboard/leaderboard.service.js';
 import { RepresentationController } from './representation/representation.controller.js';
 import { RepresentationService } from './representation/representation.service.js';
 import { PvpSeasonsService } from './seasons/pvp-seasons.service.js';
+import { TierListController } from './tier-list/tier-list.controller.js';
+import { TierListService } from './tier-list/tier-list.service.js';
 
 /**
  * The PvP leaderboards, the seasons and title cutoffs they show, spec
- * representation, title cutoffs with who reaches them, and character pages from Blizzard.
+ * representation, title cutoffs with who reaches them, spec tier lists, and character pages
+ * from Blizzard.
  */
 @Module({
   imports: [BlizzardModule, RankwardenModule],
@@ -25,6 +28,7 @@ import { PvpSeasonsService } from './seasons/pvp-seasons.service.js';
     RepresentationController,
     PvpCharacterController,
     CutoffsController,
+    TierListController,
   ],
   providers: [
     PvpSeasonsService,
@@ -34,6 +38,7 @@ import { PvpSeasonsService } from './seasons/pvp-seasons.service.js';
     CharacterLoader,
     PvpCharacterService,
     CutoffsService,
+    TierListService,
   ],
   exports: [PvpSeasonsService],
 })

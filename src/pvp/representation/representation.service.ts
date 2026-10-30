@@ -3,8 +3,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import type { SpecRepresentationDocument } from '../entities/spec-representation.entity.js';
+import {
+  HISTORY_DAYS,
+  type RepresentationHistoryQuery,
+} from './dto/representation-history-query.dto.js';
 import { LATEST, type RepresentationQuery } from './dto/representation-query.dto.js';
-import type { RepresentationResponse } from './representation.types.js';
+import type {
+  RepresentationDay,
+  RepresentationHistoryResponse,
+  RepresentationResponse,
+} from './representation.types.js';
 
 const day = (date: Date) => date.toISOString().slice(0, 10);
 
@@ -79,4 +87,72 @@ export class RepresentationService {
 
     return response;
   }
+
+  /**
+   * The last `HISTORY_DAYS` UTC days, today included, oldest first, only the
+   * days that have a snapshot. One range read through `snapshot_identity`
+   * (date first): at most 31 documents, each spec exactly as the day's own
+   * endpoint gives it, hero talents included — about 265 KB for a full Solo
+   * Shuffle month before compression.
+   *
+   * 404 only when the whole window is empty.
+   */
+  async history(
+    query: RepresentationHistoryQuery,
+    now = new Date(),
+  ): Promise<RepresentationHistoryResponse> {
+    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const from = new Date(to.getTime() - (HISTORY_DAYS - 1) * DAY_MS);
+
+    const docs = await this.mongo
+      .collection<SpecRepresentationDocument>(Collections.SpecRepresentation)
+      .find(
+        {
+          region: query.region,
+          family: query.bracket,
+          minRating: query.rating,
+          date: { $gte: from, $lte: to },
+        },
+        { sort: { date: 1, seasonId: -1 } },
+      )
+      .project<
+        Pick<SpecRepresentationDocument, 'date' | 'computedAt' | 'total' | 'classified' | 'specs'>
+      >({ _id: 0, date: 1, computedAt: 1, total: 1, classified: 1, specs: 1 })
+      .toArray();
+
+    const days: RepresentationDay[] = [];
+    for (const doc of docs) {
+      const date = day(new Date(doc.date));
+      // A rollover day can hold two seasons; sorted newest season first, so
+      // the first seen wins, as on the daily endpoint.
+      if (days.at(-1)?.date === date) continue;
+
+      days.push({
+        date,
+        computedAt: new Date(doc.computedAt).toISOString(),
+        total: doc.total,
+        classified: doc.classified,
+        specs: [...(doc.specs ?? [])].sort((a, b) => b.count - a.count),
+      });
+    }
+
+    if (days.length === 0) {
+      throw new NotFoundException({
+        message:
+          `No spec representation snapshots for ${query.region} ${query.bracket} at ` +
+          `${query.rating} between ${day(from)} and ${day(to)}`,
+      });
+    }
+
+    return {
+      region: query.region,
+      bracket: query.bracket,
+      rating: query.rating,
+      from: day(from),
+      to: day(to),
+      days,
+    };
+  }
 }
+
+const DAY_MS = 86_400_000;
