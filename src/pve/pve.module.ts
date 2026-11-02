@@ -8,14 +8,16 @@ import { PveCharacterController } from './character/character.controller.js';
 import { PveCharacterService } from './character/character.service.js';
 import { GuildController } from './guild/guild.controller.js';
 import { GuildService } from './guild/guild.service.js';
+import { RaidsController } from './raids/raids.controller.js';
 
 /**
  * PvE pages from Raider.io: characters (raids, Mythic+ scores and runs, gear and
- * talents) and guilds (progression, rankings, roster, raid encounters, boss kills).
+ * talents) and guilds (progression, rankings, roster, raid encounters, boss kills);
+ * and the raid list, from Rankwarden's catalogue.
  */
 @Module({
   imports: [RaiderIoModule, BlizzardModule, RankwardenModule, SeasonsModule],
-  controllers: [PveCharacterController, GuildController],
+  controllers: [PveCharacterController, GuildController, RaidsController],
   providers: [PveCharacterService, GuildService],
 })
 export class PveModule {}

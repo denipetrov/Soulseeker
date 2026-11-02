@@ -605,8 +605,10 @@ kills from Blizzard's `encounters/raids`.
 every raid and Mythic+ season Rankwarden catalogues, for the PvE character lookups.
 
 - **What it keeps.**
-  - From `raids`: each raid's `slug`, `name`, `expansionId` and `encounters` (`id`, `slug`,
-    `name`, in boss order).
+  - From `raids`: each raid's `slug`, `name`, `shortName`, `expansionId`, `icon`, `starts`
+    and `ends` per region (ISO strings), and `encounters` (`id`, `slug`, `name`, in boss
+    order). Raider.io's placeholder end for a raid still open, `2030-01-01`, becomes
+    `null`.
   - From `mplus_seasons`: each season's `slug`, `name`, `expansionId`, `dungeonIds`, and
     `cutoffs` per region. A region's cutoffs are the top 0.1% (`p999`) and top 1% (`p990`)
     minimum scores, from `cutoffs.<region>.quantiles.*.all.minScore`.
@@ -614,15 +616,41 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     being read.
 - **Order.** Newest expansion first, then the latest to open within it, by the earliest
   regional start. Unlisted entries are kept, since a character's history may name them.
-- **In memory, per replica.** It is read at startup (`onApplicationBootstrap`), then again
-  on the first call after `PVE_CATALOGUE_TTL_SECONDS` (a day). There is a single flight
-  per replica. The top-percent cutoffs move through a live season, so they can be up to a
-  day behind Rankwarden.
-  - A failed reload keeps the last catalogue and is retried on the next call.
+- **Raids are in Redis**, one value under `ss:cache:pve:raids` (`RAIDS_CACHE_KEY`, about
+  32 KB), so every replica serves the same list.
+  - The list is filled on demand: the first call that finds the key missing reads Mongo
+    and stores the list for `PVE_CATALOGUE_TTL_SECONDS` (a day), through
+    `CacheService.getOrLoad`.
+  - There is no preload at startup. Concurrent misses on one replica share one read.
+  - If Redis is down, each call reads Mongo. If Mongo fails too while the key is
+    missing, the call fails (`GET /pve/raids` answers 503).
+  - To pick up a raid Rankwarden has just added, delete the key: the next call refills it.
+- **Mythic+ seasons are in memory, per replica.** They are read at startup
+  (`onApplicationBootstrap`), then again on the first call after the same TTL. There is a
+  single flight per replica. The top-percent cutoffs move through a live season, so they
+  can be up to a day behind Rankwarden.
+  - A failed reload keeps the last seasons and is retried on the next call.
   - A failure at startup is logged and does not stop the boot. Only a replica that has
-    never read the catalogue fails a call.
-- **API.** `catalogue()`, `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
+    never read them fails a call.
+- **API.** `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
   `raidSlugs()`, `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
+
+### PvE raids
+
+`GET /pve/raids` (`src/pve/raids/raids.controller.ts`) lists every raid in the catalogue:
+`{ raids: CatalogueRaid[] }`, with all 31 raids today, ~32 KB before compression.
+
+- **Source.** `PveCatalogue.raids()`: the list in Redis, shared by every replica, read
+  from Mongo when it is missing. It is up to a day (`PVE_CATALOGUE_TTL_SECONDS`) behind
+  Rankwarden, which is fine: raids change a few times an expansion.
+- **Order.** Newest expansion first, then the latest to open within it. Unlisted raids
+  are included.
+- **Fields.**
+  - `ends.<region>` is null while the raid is open there.
+  - `icon` is Raider.io's value as stored: an icon name (`inv_1215_raid_achievement_kithix`)
+    or, on some raids, a numeric file id (`8039569`). It is null on Legion raids. The front
+    end resolves it to an image.
+- **503** only when the list is missing from Redis and Mongo cannot be read.
 
 ## 8. Rankwarden sync
 

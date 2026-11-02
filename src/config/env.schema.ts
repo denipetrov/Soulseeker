@@ -394,8 +394,8 @@ export const envSchema = z.object({
   /** The shortest gap between two `forceRefresh` lookups of one guild. */
   GUILD_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
   /**
-   * How long the raid and Mythic+ season catalogue is held in memory before it
-   * is read again. Rankwarden re-reads both once a day.
+   * How long the raid list stays in Redis, and the Mythic+ seasons in memory,
+   * before they are read from Mongo again. Rankwarden re-reads both once a day.
    */
   PVE_CATALOGUE_TTL_SECONDS: positiveInt(86_400),
   /** The shortest gap between two `forceRefresh` lookups of one character. */
