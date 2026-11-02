@@ -27,9 +27,8 @@ async function raids(): Promise<{ status: number; body: Json }> {
 }
 
 beforeAll(async () => {
-  // Seeded after the boot: the tests wait out the 1 s TTL so the catalogue reads them.
   app = await bootTestApp({
-    env: { PVE_CATALOGUE_TTL_SECONDS: '1', RATE_LIMIT_API_PER_MINUTE: '1000' },
+    env: { RATE_LIMIT_API_PER_MINUTE: '1000' },
   });
   await resetRedis(app);
   ({ db, drop } = await openTestDatabase(app.dbName));
@@ -79,8 +78,6 @@ beforeAll(async () => {
   ]);
 
   token = (await anonymousTokens(app)).access_token;
-  // Past the 1 s TTL, so the documents inserted after the boot are read.
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
 });
 
 afterAll(async () => {

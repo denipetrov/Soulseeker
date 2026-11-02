@@ -2,7 +2,11 @@ import type { Db } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { RedisService } from '../src/redis/redis.service.js';
-import { PveCatalogue, RAIDS_CACHE_KEY } from '../src/seasons/pve-catalogue.service.js';
+import {
+  MPLUS_SEASONS_CACHE_KEY,
+  PveCatalogue,
+  RAIDS_CACHE_KEY,
+} from '../src/seasons/pve-catalogue.service.js';
 import { bootTestApp, resetRedis, type TestApp } from './support/app.js';
 import { openTestDatabase } from './support/database.js';
 
@@ -13,7 +17,7 @@ let drop: () => Promise<void>;
 const encounter = (id: number, slug: string, name: string) => ({ id, slug, name });
 
 beforeAll(async () => {
-  // Seeded after the boot: the tests wait out the 1 s TTL so the catalogue reads them.
+  // A 1 s TTL, so the last test can see a list expire.
   app = await bootTestApp({ env: { PVE_CATALOGUE_TTL_SECONDS: '1' } });
   ({ db, drop } = await openTestDatabase(app.dbName));
 
@@ -93,8 +97,6 @@ afterAll(async () => {
 describe('PveCatalogue', () => {
   it('holds slugs, names, bosses, icons, dates and dungeon ids, newest first, and nothing else', async () => {
     const catalogue = app.app.get(PveCatalogue);
-    // Past the 1 s TTL, so the documents inserted after the boot are read.
-    await new Promise((resolve) => setTimeout(resolve, 1_100));
 
     const [raids, mplusSeasons] = await Promise.all([catalogue.raids(), catalogue.mplusSeasons()]);
 
@@ -193,10 +195,19 @@ describe('PveCatalogue', () => {
     expect(await catalogue.raidSlugs()).toEqual(['manaforge-omega', ...first]);
   });
 
-  it('holds the Mythic+ seasons in memory within the TTL and reads them again after it', async () => {
+  it('keeps the Mythic+ seasons in Redis the same way', async () => {
     const catalogue = app.app.get(PveCatalogue);
-    const first = await catalogue.mplusSeasons();
+    const redis = app.app.get(RedisService);
+    const key = redis.key('cache', MPLUS_SEASONS_CACHE_KEY);
+    await redis.client.del(key);
 
+    const first = await catalogue.mplusSeasonSlugs();
+    expect(
+      JSON.parse((await redis.client.get(key))!).map((season: { slug: string }) => season.slug),
+    ).toEqual(first);
+    expect(await redis.client.ttl(key)).toBeGreaterThan(0);
+
+    // Cached: a season Rankwarden adds is not seen until the key is missing.
     await db.collection('mplus_seasons').insertOne({
       slug: 'season-mn-3',
       name: 'MN Season 3',
@@ -204,14 +215,26 @@ describe('PveCatalogue', () => {
       starts: { us: new Date('2027-01-12T15:00:00Z') },
       dungeonIds: [4],
     });
+    expect(await catalogue.mplusSeasonSlugs()).toEqual(first);
 
-    expect(await catalogue.mplusSeasons()).toBe(first);
+    await redis.client.del(key);
+    expect(await catalogue.mplusSeasonSlugs()).toEqual(['season-mn-3', ...first]);
+  });
 
+  it('reads Mongo again once the TTL has passed', async () => {
+    const catalogue = app.app.get(PveCatalogue);
+    await catalogue.raidSlugs();
+    await db.collection('raids').insertOne({
+      id: 3000,
+      slug: 'march-on-queldanas',
+      name: "March on Quel'Danas",
+      expansionId: 11,
+      starts: { us: new Date('2026-12-01T15:00:00Z') },
+      encounters: [],
+    });
+
+    // The suite runs with a 1 s TTL.
     await new Promise((resolve) => setTimeout(resolve, 1_100));
-    expect(await catalogue.mplusSeasonSlugs()).toEqual([
-      'season-mn-3',
-      'season-mn-2',
-      'season-tww-1',
-    ]);
+    expect((await catalogue.raidSlugs())[0]).toBe('march-on-queldanas');
   });
 });

@@ -1,8 +1,7 @@
-import { Injectable, type OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RunLogger } from '@denipetrov/spirit-link/logging';
 
-import { describeError } from '../common/utils/errors.js';
 import type { Env } from '../config/env.schema.js';
 import { Collections } from '../database/collections.js';
 import { MongoService } from '../database/mongo.service.js';
@@ -58,15 +57,9 @@ export interface CatalogueMplusSeason {
   cutoffs: Partial<Record<string, TopPercentCutoffs>>;
 }
 
-/** The Mythic+ seasons as held in memory. */
-interface MplusSeasonsSnapshot {
-  /** Newest first. */
-  seasons: CatalogueMplusSeason[];
-  loadedAt: string;
-}
-
-/** The raid list's key in Redis, under the cache prefix: one value for every replica. */
+/** The catalogue's keys in Redis, under the cache prefix: one value each, for every replica. */
 export const RAIDS_CACHE_KEY = 'pve:raids';
+export const MPLUS_SEASONS_CACHE_KEY = 'pve:mplus-seasons';
 
 interface RaidDocument extends Omit<CatalogueRaid, 'shortName' | 'icon' | 'starts' | 'ends'> {
   shortName?: string | null;
@@ -122,15 +115,12 @@ const newestFirst = (
  * `mplus_seasons`. Both are a few dozen small documents that change about once
  * a day.
  *
- * - **Raids** are kept in Redis, as one value under `RAIDS_CACHE_KEY`, so every
- *   replica serves the same list. They are filled on demand: the first call
- *   that finds the key missing reads Mongo and stores the list for
- *   `PVE_CATALOGUE_TTL_SECONDS` (a day). Concurrent misses on one replica share
- *   that read. If Redis is away, each call reads Mongo instead; if Mongo fails
- *   too, the call fails.
- * - **Mythic+ seasons** are held in memory, per replica: read at startup and
- *   again on the first call after the TTL. A failed reload keeps the last
- *   seasons; only a replica that has never read them fails.
+ * Each list is one value in Redis (`RAIDS_CACHE_KEY`, `MPLUS_SEASONS_CACHE_KEY`),
+ * so every replica serves the same catalogue. Filled on demand: the first call
+ * that finds a key missing reads Mongo and stores the list for
+ * `PVE_CATALOGUE_TTL_SECONDS` (a day). Concurrent misses on one replica share
+ * that read. If Redis is away, each call reads Mongo instead; if Mongo fails
+ * too, the call fails.
  *
  * Only what the lookups and `GET /pve/raids` need is kept: slugs, names,
  * expansions, a raid's bosses, icon and regional dates, a season's dungeon ids
@@ -138,13 +128,9 @@ const newestFirst = (
  * archive progress — most of the documents' size — are never read.
  */
 @Injectable()
-export class PveCatalogue implements OnApplicationBootstrap {
+export class PveCatalogue {
   private readonly logger = new RunLogger(PveCatalogue.name);
   private readonly ttlSeconds: number;
-  private seasons: MplusSeasonsSnapshot | null = null;
-  private seasonsLoadedAtMs = 0;
-  /** One seasons reload at a time on this replica. */
-  private loadingSeasons: Promise<MplusSeasonsSnapshot> | null = null;
 
   constructor(
     private readonly mongo: MongoService,
@@ -154,26 +140,20 @@ export class PveCatalogue implements OnApplicationBootstrap {
     this.ttlSeconds = config.get('PVE_CATALOGUE_TTL_SECONDS', { infer: true });
   }
 
-  /**
-   * Loads the Mythic+ seasons at startup, so the first lookup does not pay for
-   * them; a failure here is retried later. Raids are filled on demand.
-   */
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.seasonsSnapshot();
-    } catch (error) {
-      this.logger.error(`Mythic+ seasons not loaded at startup: ${describeError(error)}`);
-    }
-  }
-
   /** Newest expansion first, then the latest to open within it. */
   async raids(): Promise<CatalogueRaid[]> {
     // Never null: the loader returns a list, empty at worst, or throws.
     return (await this.cache.getOrLoad(RAIDS_CACHE_KEY, () => this.loadRaids(), this.ttlSeconds))!;
   }
 
+  /** Newest expansion first, then the latest to open within it. */
   async mplusSeasons(): Promise<CatalogueMplusSeason[]> {
-    return (await this.seasonsSnapshot()).seasons;
+    // Never null, as with the raids.
+    return (await this.cache.getOrLoad(
+      MPLUS_SEASONS_CACHE_KEY,
+      () => this.loadSeasons(),
+      this.ttlSeconds,
+    ))!;
   }
 
   async raidSlugs(): Promise<string[]> {
@@ -235,28 +215,7 @@ export class PveCatalogue implements OnApplicationBootstrap {
     }));
   }
 
-  private async seasonsSnapshot(): Promise<MplusSeasonsSnapshot> {
-    if (this.seasons && Date.now() - this.seasonsLoadedAtMs < this.ttlSeconds * 1000) {
-      return this.seasons;
-    }
-
-    this.loadingSeasons ??= this.loadSeasons()
-      .catch((error: unknown) => {
-        if (!this.seasons) throw error;
-
-        this.logger.warn(
-          `Mythic+ seasons reload failed, keeping the last ones: ${describeError(error)}`,
-        );
-        return this.seasons;
-      })
-      .finally(() => {
-        this.loadingSeasons = null;
-      });
-
-    return this.loadingSeasons;
-  }
-
-  private async loadSeasons(): Promise<MplusSeasonsSnapshot> {
+  private async loadSeasons(): Promise<CatalogueMplusSeason[]> {
     const seasons = await this.mongo
       .collection<MplusSeasonDocument>(Collections.MplusSeasons)
       .find(
@@ -281,30 +240,22 @@ export class PveCatalogue implements OnApplicationBootstrap {
       )
       .toArray();
 
-    const loadedAt = new Date();
-    const snapshot: MplusSeasonsSnapshot = {
-      seasons: seasons.sort(newestFirst).map((season) => ({
-        slug: season.slug,
-        name: season.name,
-        dungeonIds: season.dungeonIds ?? [],
-        expansionId: season.expansionId,
-        cutoffs: Object.fromEntries(
-          Object.entries(season.cutoffs ?? {}).map(([region, cutoff]) => [
-            region,
-            {
-              p999: minScoreOf(cutoff.quantiles?.p999),
-              p990: minScoreOf(cutoff.quantiles?.p990),
-            },
-          ]),
-        ),
-      })),
-      loadedAt: loadedAt.toISOString(),
-    };
+    this.logger.log(`Mythic+ seasons read: ${seasons.length}, cached for ${this.ttlSeconds}s`);
 
-    this.seasons = snapshot;
-    this.seasonsLoadedAtMs = loadedAt.getTime();
-    this.logger.log(`Mythic+ seasons loaded: ${snapshot.seasons.length}, for ${this.ttlSeconds}s`);
-
-    return snapshot;
+    return seasons.sort(newestFirst).map((season) => ({
+      slug: season.slug,
+      name: season.name,
+      dungeonIds: season.dungeonIds ?? [],
+      expansionId: season.expansionId,
+      cutoffs: Object.fromEntries(
+        Object.entries(season.cutoffs ?? {}).map(([region, cutoff]) => [
+          region,
+          {
+            p999: minScoreOf(cutoff.quantiles?.p999),
+            p990: minScoreOf(cutoff.quantiles?.p990),
+          },
+        ]),
+      ),
+    }));
   }
 }

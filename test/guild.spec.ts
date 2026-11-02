@@ -108,8 +108,6 @@ beforeAll(async () => {
       { id: 3180, slug: 'midnight-falls', name: 'Midnight Falls' },
     ],
   });
-  // The catalogue was read at boot, before this: let its 1 s TTL pass.
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
 });
 
 afterAll(async () => {

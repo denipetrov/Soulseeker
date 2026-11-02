@@ -197,8 +197,6 @@ beforeAll(async () => {
       },
     },
   });
-  // The catalogue was read at boot, before these: let its 1 s TTL pass.
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
 });
 
 afterAll(async () => {

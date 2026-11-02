@@ -616,22 +616,20 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     being read.
 - **Order.** Newest expansion first, then the latest to open within it, by the earliest
   regional start. Unlisted entries are kept, since a character's history may name them.
-- **Raids are in Redis**, one value under `ss:cache:pve:raids` (`RAIDS_CACHE_KEY`, about
-  32 KB), so every replica serves the same list.
-  - The list is filled on demand: the first call that finds the key missing reads Mongo
-    and stores the list for `PVE_CATALOGUE_TTL_SECONDS` (a day), through
+- **In Redis, shared by every replica.** Two values: the raids under
+  `ss:cache:pve:raids` (`RAIDS_CACHE_KEY`, ~32 KB) and the Mythic+ seasons under
+  `ss:cache:pve:mplus-seasons` (`MPLUS_SEASONS_CACHE_KEY`, ~3.5 KB).
+  - Each is filled on demand: the first call that finds its key missing reads Mongo and
+    stores the list for `PVE_CATALOGUE_TTL_SECONDS` (a day), through
     `CacheService.getOrLoad`.
-  - There is no preload at startup. Concurrent misses on one replica share one read.
-  - If Redis is down, each call reads Mongo. If Mongo fails too while the key is
-    missing, the call fails (`GET /pve/raids` answers 503).
-  - To pick up a raid Rankwarden has just added, delete the key: the next call refills it.
-- **Mythic+ seasons are in memory, per replica.** They are read at startup
-  (`onApplicationBootstrap`), then again on the first call after the same TTL. There is a
-  single flight per replica. The top-percent cutoffs move through a live season, so they
-  can be up to a day behind Rankwarden.
-  - A failed reload keeps the last seasons and is retried on the next call.
-  - A failure at startup is logged and does not stop the boot. Only a replica that has
-    never read them fails a call.
+  - Nothing is loaded at startup, and nothing is held in memory. Concurrent misses on one
+    replica share one read.
+  - The top-percent cutoffs move through a live season, so they can be up to a day behind
+    Rankwarden.
+  - If Redis is down, each call reads Mongo. If Mongo fails too while a key is missing,
+    the call fails (`GET /pve/raids` answers 503).
+  - To pick up a raid or season Rankwarden has just added, delete its key: the next call
+    refills it.
 - **API.** `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
   `raidSlugs()`, `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
 
