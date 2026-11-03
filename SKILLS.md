@@ -650,6 +650,82 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     end resolves it to an image.
 - **503** only when the list is missing from Redis and Mongo cannot be read.
 
+### PvE raid board
+
+`GET /pve/raid?raidSlug=&region=&difficulty=` (`src/pve/raid/`) returns one raid and its
+top hundred guilds, from the `guilds` boards on Rankwarden's `raids` documents.
+
+- **Parameters.** `raidSlug` is required: a catalogue raid, or `current` (as on
+  `/pve/bosses`). `region` defaults to `world` (or `us`, `eu`, `kr`, `tw`). `difficulty`
+  defaults to `mythic`. There is no fallback to an easier difficulty.
+- **Shape.**
+  - `{ region, difficulty, raid, updatedAt, guilds }`. `raid` is `{ slug, name, icon,
+    encounters }` from the catalogue.
+  - `updatedAt` is when Rankwarden last read the board (`guildsUpdatedAt`).
+  - Each of `guilds` keeps everything stored (`rank`, `regionRank`, `encountersPulled`,
+    `encountersDefeated`, with dates as ISO strings), with `guildId` replaced by the
+    `guild` object that `/pve/bosses` also uses.
+- **Reads.** A `findOne` by `slug` (`raid_slug`), projected to the one board and its
+  timestamp, so the other boards (~180 KB each) are never read. Then the board's guilds
+  through `GuildRefs`.
+- **Size.** ~220 KB before compression for 100 guilds with every pull and kill; ~40 ms
+  uncached. Cached in Redis per region, raid and difficulty for
+  `RAID_BOARD_CACHE_TTL_SECONDS` (10 min).
+- A board Rankwarden has never read is a 200 with `guilds: []` and `updatedAt: null`.
+  Old raids have empty `encountersPulled`, and The Emerald Nightmare's world board holds
+  97 guilds, not 100.
+- **404** for a raid the catalogue lacks.
+
+`GuildRefs` (`src/pve/shared/guild-refs.service.ts`) is the guild join both boards use. It
+reads the guilds of a board in one `$in` on `guilds` (`guild_identity`) and answers
+`{ id, name, faction, logo, realm, realmSlug, region }`. An id not stored keeps its `id`,
+with its other fields null.
+
+### PvE bosses
+
+`GET /pve/bosses` (`src/pve/bosses/`) returns the first guilds to kill each boss of a raid,
+from Rankwarden's `bosses` collection. That collection holds one document per raid
+encounter, with its boards (`bossRankings.<board>.<difficulty>`, the first 50 guilds).
+
+- **Parameters** (all optional):
+  - `region`: `world` (default), `us`, `eu`, `kr` or `tw`.
+  - `raidSlug`: a catalogue raid, or `current` (default).
+  - `bossSlug`: one boss of that raid.
+  - `difficulty`: `mythic`, `heroic` or `normal`.
+  - `top`: 1–50, default 50.
+- **`current`** is `PveCatalogue.currentRaid()`: of the newest expansion's raids still
+  open in some region, the one with the most bosses. Midnight has three open (The
+  Venomous Abyss with 8 bosses, and two 1-boss raids beside it), so this picks the tier's
+  main raid. When none is open (between tiers), all of the newest expansion's raids are
+  taken. A tie goes to the newer raid.
+- **Order.** The bosses come in the raid's `encounters` order from the catalogue, not
+  Mongo's order. A boss is matched by encounter `id`, then by `slug`. A boss the catalogue
+  lists but `bosses` lacks still appears, with `difficulty: null` and no rankings.
+- **Difficulty is one for the whole answer**, at the top level next to `region`. A list
+  must not mix mythic and heroic bosses.
+  - Without one asked for, it is the first of mythic, heroic, normal on which any of the
+    requested bosses has guilds on the region's board. Every boss is answered at it, so a
+    boss nobody has killed there has an empty `bossRankings`, not an easier board.
+  - Blackrock Depths has no mythic board at all, so it answers `heroic`.
+  - A difficulty asked for is used even when every board is empty. `difficulty` is null
+    only when no board of any difficulty has guilds.
+- **Reads.** The raid's bosses are read by `{ raidSlug, slug: { $in } }` through
+  `boss_raid_slug_name`, never by slug alone: a re-release's boss can share a slug with
+  the original's. The projection keeps only `bossRankings.<region>.<difficulty>`. Then
+  every guild on the chosen boards is read in one `$in` on `guilds` (`guild_identity`).
+- **Shape.** `{ region, difficulty, bosses }`. Each boss has `bossName` and `bossSlug`; a
+  `raid` object (`slug`, `name`, `icon`, `expansionId`); and `bossRankings`. Each ranking has `rank`,
+  `itemLevelAvg`, `attempts` and `firstDefeated`, plus a `guild` object (`id`, `name`,
+  `faction`, `logo`, `realm`, `realmSlug`, `region`).
+  - `firstDefeated` and `attempts` are null for a guild ranked for progress without a
+    kill. `attempts` is often null or 0, as Raider.io sends it.
+  - A guild missing from `guilds` keeps its `id`, with its other fields null.
+- **Cache.** Whole boards are cached in Redis per region, raid, boss and difficulty for
+  `BOSSES_CACHE_TTL_SECONDS` (10 min). `top` slices the cached answer.
+  - The current raid with every boss is ~113 KB before compression and takes ~50 ms
+    uncached.
+- **404** for a raid the catalogue lacks, or a boss the raid does not have.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:

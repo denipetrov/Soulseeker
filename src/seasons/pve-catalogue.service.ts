@@ -176,6 +176,25 @@ export class PveCatalogue {
     return raids.filter((raid) => raid.expansionId === newest);
   }
 
+  /**
+   * The raid in progress: of the newest expansion's raids still open in some
+   * region, the one with the most bosses — the tier's main raid, not a
+   * one-boss raid that opened beside it. Between tiers, when none is open, the
+   * newest expansion's raids are taken instead. A tie goes to the newer raid.
+   * Null only with an empty catalogue.
+   */
+  async currentRaid(): Promise<CatalogueRaid | null> {
+    const raids = await this.currentExpansionRaids();
+    const open = raids.filter((raid) => Object.values(raid.ends).some((end) => end === null));
+    const candidates = open.length > 0 ? open : raids;
+
+    // Newest first already, so the first of the most bosses is the newer.
+    return candidates.reduce<CatalogueRaid | null>(
+      (best, raid) => (!best || raid.encounters.length > best.encounters.length ? raid : best),
+      null,
+    );
+  }
+
   async mplusSeason(slug: string): Promise<CatalogueMplusSeason | null> {
     return (await this.mplusSeasons()).find((season) => season.slug === slug) ?? null;
   }

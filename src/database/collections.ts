@@ -36,6 +36,7 @@ export const Collections = {
   // Raids.
   Raids: 'raids',
   Guilds: 'guilds',
+  Bosses: 'bosses',
 } as const;
 
 export type ReadCollection = (typeof Collections)[keyof typeof Collections];

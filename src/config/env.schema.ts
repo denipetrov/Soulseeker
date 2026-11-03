@@ -387,6 +387,13 @@ export const envSchema = z.object({
    * Raider.io again. The full roster is never cached.
    */
   GUILD_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /**
+   * How long one boss board answer is reused. Rankwarden's rankings job rewrites
+   * the boards a few times a day, and a first kill matters most while it is new.
+   */
+  BOSSES_CACHE_TTL_SECONDS: positiveInt(600),
+  /** How long one raid board (top hundred guilds of a region and difficulty) is reused. */
+  RAID_BOARD_CACHE_TTL_SECONDS: positiveInt(600),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
   /** How long an expired guild part is kept past its TTL, to be served stale. */
