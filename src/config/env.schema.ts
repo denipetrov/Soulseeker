@@ -394,6 +394,8 @@ export const envSchema = z.object({
   BOSSES_CACHE_TTL_SECONDS: positiveInt(600),
   /** How long one raid board (top hundred guilds of a region and difficulty) is reused. */
   RAID_BOARD_CACHE_TTL_SECONDS: positiveInt(600),
+  /** How long one Mythic+ leaderboard page is reused. Rankwarden refreshes M+ every few hours. */
+  MPLUS_LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(300),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
   /** How long an expired guild part is kept past its TTL, to be served stale. */

@@ -650,6 +650,53 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     end resolves it to an image.
 - **503** only when the list is missing from Redis and Mongo cannot be read.
 
+### PvE Mythic+ leaderboard
+
+`GET /pve/mplus-leaderboard` (`src/pve/mplus-leaderboard/`) returns Mythic+ characters by
+`mythicScore`, best first, one page at a time.
+
+- **Parameters** (all optional):
+  - `region`: `world` (default), `us`, `eu`, `kr`, `tw` or `cn`. Raider.io covers China,
+    unlike the PvP ladders.
+  - `season`: a slug or `current` (default).
+  - `class`, `spec`, `role`.
+  - `page` and `pageSize`: the same paging as `/pvp/leaderboard` (default 50, max 100, rows
+    up to 200,000).
+- **Season.** `current` is the region's live season from `mplus_season_state`. On `world`
+  it is the newest season any region is on (catalogue order).
+  - That season reads `mplus_characters`. Any other reads `mplus_archive_characters`, and
+    `current: false` says so. The archive keeps only the top of each region (~4,750
+    characters for season-mn-1).
+  - A slug the catalogue does not know is a **404**.
+- **Filters** match the stored profile by Blizzard id: `profile.classId` (`CLASS_IDS`) and
+  `profile.specId` (`SPEC_IDS`, both in `src/pvp/specs.ts`, checked against every spec in
+  the data), and `profile.role` (`tank`, `healer`, `dps`).
+  - The slugs are the PvP endpoints'; the stored names (`Death Knight`, `Beast Mastery`)
+    are never matched.
+  - `spec` needs `class`, and must be one of its specs. `spec` and `role` never come
+    together. Each of these is a **400**.
+- **Reads** are hinted by name to Rankwarden's score boards (`Indexes.MplusScoreBoard`,
+  `MplusArchiveScoreBoard`, `MplusArchiveRegionScoreBoard`), so a page is an index walk in
+  score order. The count uses the same hint.
+  - On the live `world` board, `region: { $in: [all five] }` lets `mplus_score_board`'s
+    per-region ranges merge in order (`SORT_MERGE`) instead of an in-memory sort of the
+    season. Page 1 reads 50 documents; page 1,000 reads 50,000 keys in ~47 ms.
+  - No index covers the profile. A filtered page reads documents along the board until
+    the page is full, and the count reads them all. The worst case is a rare spec on
+    `world` (Fire mage, 34 of 52,725): ~93 ms plus ~36 ms for the count, uncached.
+  - If this grows, the index to propose to Rankwarden is
+    `{ season: 1, 'profile.specId': 1, mythicScore: -1 }`, plus one led by
+    `profile.classId` or `profile.role`.
+- **Shape.** `{ region, season, current, class, spec, role, page, pageSize, total,
+  totalPages, entries }`.
+  - Each entry has `rank` (its place on the filtered board), then `characterName`,
+    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, the stored `profile`, and
+    `dungeonRuns` as stored (with `completedAt` as an ISO string).
+  - Dungeons are not enriched from `mplus_dungeons`: the front end reads them separately.
+- **Ties.** Many characters share a score (several at 4265.1 at the top). The order among
+  equal scores is the index's, stable from page to page.
+- **Cache.** Pages are cached in Redis for `MPLUS_LEADERBOARD_CACHE_TTL_SECONDS` (5 min).
+
 ### PvE raid board
 
 `GET /pve/raid?raidSlug=&region=&difficulty=` (`src/pve/raid/`) returns one raid and its

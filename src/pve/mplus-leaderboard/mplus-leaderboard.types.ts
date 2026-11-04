@@ -1,0 +1,39 @@
+import type {
+  DungeonRun,
+  MplusCharacterDocument,
+} from '../../characters/entities/mplus-character.entity.js';
+
+/** One character on the board, as Rankwarden stores it. */
+export interface MplusLeaderboardEntry {
+  /** Place on this board, filters included: page offset plus position. */
+  rank: number;
+  characterName: string;
+  realmName: string | null;
+  realmSlug: string;
+  region: string;
+  faction: string | null;
+  mythicScore: number;
+  profile: MplusCharacterDocument['profile'];
+  /**
+   * The best run per dungeon, highest score first, as stored (`completedAt`
+   * as an ISO string). Dungeons by id; `GET` them separately for their art.
+   */
+  dungeonRuns: (Omit<DungeonRun, 'completedAt'> & { completedAt: string })[];
+}
+
+export interface MplusLeaderboardResponse {
+  /** `world` or the region asked for. */
+  region: string;
+  /** The season slug answered: `current` resolved. */
+  season: string;
+  /** Read from the live collection; false for an archived season. */
+  current: boolean;
+  class: string | null;
+  spec: string | null;
+  role: string | null;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  entries: MplusLeaderboardEntry[];
+}

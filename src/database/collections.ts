@@ -53,4 +53,10 @@ export const Indexes = {
   MplusCharacterSearch: 'mplus_character_search',
   /** `{ searchName: 1 }` on `guilds`. */
   GuildSearch: 'guild_search',
+  /** `{ season: 1, region: 1, mythicScore: -1 }` on `mplus_characters`. */
+  MplusScoreBoard: 'mplus_score_board',
+  /** `{ season: 1, mythicScore: -1 }` on `mplus_archive_characters`. */
+  MplusArchiveScoreBoard: 'archive_score_board',
+  /** `{ season: 1, region: 1, mythicScore: -1 }` on `mplus_archive_characters`. */
+  MplusArchiveRegionScoreBoard: 'archive_score_region_board',
 } as const;
