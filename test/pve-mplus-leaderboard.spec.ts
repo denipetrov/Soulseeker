@@ -32,6 +32,7 @@ const character = (
   region: string,
   mythicScore: number,
   profile: keyof typeof PROFILES,
+  isFullyCovered = true,
 ) => {
   n++;
   return {
@@ -50,7 +51,8 @@ const character = (
     faction: 'horde',
     profile: { ...PROFILES[profile], raceId: 1, raceName: 'Human', level: 90 },
     mythicScore,
-    dungeonsCovered: 1,
+    dungeonsCovered: isFullyCovered ? 8 : 1,
+    isFullyCovered,
     dungeonRuns: [
       {
         dungeon: { id: 1, name: 'Murder Row', slug: 'murder-row', shortName: 'MR' },
@@ -84,16 +86,32 @@ beforeAll(async () => {
   await resetRedis(app);
   ({ db, drop } = await openTestDatabase(app.dbName));
 
-  // Rankwarden's indexes, which the reads hint by name.
-  await db
-    .collection('mplus_characters')
-    .createIndex({ season: 1, region: 1, mythicScore: -1 }, { name: 'mplus_score_board' });
-  await db
-    .collection('mplus_archive_characters')
-    .createIndex({ season: 1, mythicScore: -1 }, { name: 'archive_score_board' });
-  await db
-    .collection('mplus_archive_characters')
-    .createIndex({ season: 1, region: 1, mythicScore: -1 }, { name: 'archive_score_region_board' });
+  // Rankwarden's board indexes, which the reads hint by name.
+  const fields = { class: 'profile.classId', spec: 'profile.specId', role: 'profile.role' };
+  for (const [collection, prefix] of [
+    ['mplus_characters', 'mplus'],
+    ['mplus_archive_characters', 'archive'],
+  ] as const) {
+    const indexes = Object.entries(fields).flatMap(([kind, field]) => [
+      { key: { season: 1, [field]: 1, mythicScore: -1 }, name: `${prefix}_${kind}_board` },
+      {
+        key: { season: 1, region: 1, [field]: 1, mythicScore: -1 },
+        name: `${prefix}_${kind}_region_board`,
+      },
+    ]);
+    indexes.push(
+      prefix === 'mplus'
+        ? { key: { season: 1, region: 1, mythicScore: -1 }, name: 'mplus_score_board' }
+        : { key: { season: 1, mythicScore: -1 }, name: 'archive_score_board' },
+    );
+    if (prefix === 'archive') {
+      indexes.push({
+        key: { season: 1, region: 1, mythicScore: -1 },
+        name: 'archive_score_region_board',
+      });
+    }
+    await db.collection(collection).createIndexes(indexes);
+  }
 
   await db.collection('mplus_seasons').insertMany([
     { slug: LIVE, name: 'MN Season 2', expansionId: 11, starts: { us: new Date('2026-08-18') } },
@@ -107,7 +125,8 @@ beforeAll(async () => {
 
   await db.collection('mplus_characters').insertMany([
     character(LIVE, 'eu', 4000, 'arcane'),
-    character(LIVE, 'us', 3900, 'holy'),
+    // Runs missing a dungeon: still on the board, flagged.
+    character(LIVE, 'us', 3900, 'holy', false),
     character(LIVE, 'kr', 3800, 'fire'),
     character(LIVE, 'eu', 3700, 'disc'),
     character(LIVE, 'cn', 3600, 'blood'),
@@ -163,6 +182,7 @@ describe('GET /pve/mplus-leaderboard', () => {
       region: 'eu',
       faction: 'horde',
       mythicScore: 4000,
+      isFullyCovered: true,
       profile: {
         classId: 8,
         className: 'Mage',
@@ -180,6 +200,19 @@ describe('GET /pve/mplus-leaderboard', () => {
         }),
       ],
     });
+  });
+
+  it('lists characters whose runs miss a dungeon, flagged', async () => {
+    const { body } = await board('pageSize=2');
+
+    expect(body.entries.map((e: Json) => [e.mythicScore, e.isFullyCovered])).toEqual([
+      [4000, true],
+      [3900, false],
+    ]);
+    expect((await board('role=healer')).body.entries.map((e: Json) => e.isFullyCovered)).toEqual([
+      false,
+      true,
+    ]);
   });
 
   it('pages, with ranks carrying on from page to page', async () => {

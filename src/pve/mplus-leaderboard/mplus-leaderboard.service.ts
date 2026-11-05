@@ -4,7 +4,7 @@ import type { Filter } from 'mongodb';
 
 import type { MplusCharacterDocument } from '../../characters/entities/mplus-character.entity.js';
 import type { Env } from '../../config/env.schema.js';
-import { Collections, Indexes } from '../../database/collections.js';
+import { Collections, MplusBoardIndexes, type MplusBoardKind } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { CLASS_IDS, SPEC_IDS } from '../../pvp/specs.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
@@ -23,6 +23,7 @@ const PROJECTION = {
   region: 1,
   faction: 1,
   mythicScore: 1,
+  isFullyCovered: 1,
   profile: 1,
   dungeonRuns: 1,
 } as const;
@@ -35,6 +36,7 @@ type Row = Pick<
   | 'region'
   | 'faction'
   | 'mythicScore'
+  | 'isFullyCovered'
   | 'profile'
   | 'dungeonRuns'
 >;
@@ -49,11 +51,15 @@ type Row = Pick<
  *   `mplus_archive_characters`. A season the catalogue does not know is a 404.
  * - **Filters** match the stored profile by Blizzard id — `profile.classId`,
  *   `profile.specId` — and `profile.role`. The slugs are the PvP endpoints'.
- * - **Reads** are hinted to the score-board index, so a page is an index walk
- *   in score order. On the live `world` board the region is spelled out as
- *   `$in` every region, so the per-region ranges of `mplus_score_board` merge
- *   in order rather than being sorted in memory. No index covers the profile:
- *   a filtered page reads documents along the board until it has a page.
+ * - **Reads** are hinted to Rankwarden's board index for the filter
+ *   (`MplusBoardIndexes`), so a page is an index walk in score order: the
+ *   spec board with a spec, else the class board with a class (a role beside
+ *   it is checked on the documents), else the role board, else the score
+ *   board. On the live `world` score board the region is spelled out as `$in`
+ *   every region, so the per-region ranges of `mplus_score_board` merge in
+ *   order rather than being sorted in memory.
+ * - **Coverage.** Every character is listed; `isFullyCovered` says whether
+ *   their runs cover every dungeon of the season, so `mythicScore` is whole.
  *
  * Pages are cached in Redis for `MPLUS_LEADERBOARD_CACHE_TTL_SECONDS`.
  */
@@ -119,10 +125,17 @@ export class MplusLeaderboardService {
     season: string,
     live: boolean,
   ): Promise<MplusLeaderboardResponse> {
+    const kind: MplusBoardKind = query.spec
+      ? 'spec'
+      : query.class
+        ? 'class'
+        : query.role
+          ? 'role'
+          : 'score';
     const filter: Filter<MplusCharacterDocument> = { season };
     if (query.region !== WORLD) {
       filter.region = query.region as MplusCharacterDocument['region'];
-    } else if (live) {
+    } else if (live && kind === 'score') {
       filter.region = { $in: [...RAIDERIO_REGIONS] };
     }
     if (query.class) filter['profile.classId'] = CLASS_IDS[query.class];
@@ -130,11 +143,10 @@ export class MplusLeaderboardService {
       filter['profile.specId'] = SPEC_IDS[`${query.class}-${query.spec}`];
     if (query.role) filter['profile.role'] = query.role;
 
-    const hint = live
-      ? Indexes.MplusScoreBoard
-      : query.region === WORLD
-        ? Indexes.MplusArchiveScoreBoard
-        : Indexes.MplusArchiveRegionScoreBoard;
+    const hint =
+      MplusBoardIndexes[live ? 'live' : 'archive'][kind][
+        query.region === WORLD ? 'world' : 'region'
+      ];
     const collection = this.mongo.collection<MplusCharacterDocument>(
       live ? Collections.MplusCharacters : Collections.MplusArchiveCharacters,
     );
@@ -175,6 +187,7 @@ function entry(row: Row, rank: number): MplusLeaderboardEntry {
     region: row.region,
     faction: row.faction ?? null,
     mythicScore: row.mythicScore,
+    isFullyCovered: row.isFullyCovered ?? false,
     profile: row.profile,
     dungeonRuns: (row.dungeonRuns ?? []).map((run) => ({
       ...run,

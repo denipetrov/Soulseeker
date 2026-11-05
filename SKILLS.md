@@ -675,22 +675,30 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     are never matched.
   - `spec` needs `class`, and must be one of its specs. `spec` and `role` never come
     together. Each of these is a **400**.
-- **Reads** are hinted by name to Rankwarden's score boards (`Indexes.MplusScoreBoard`,
-  `MplusArchiveScoreBoard`, `MplusArchiveRegionScoreBoard`), so a page is an index walk in
-  score order. The count uses the same hint.
-  - On the live `world` board, `region: { $in: [all five] }` lets `mplus_score_board`'s
-    per-region ranges merge in order (`SORT_MERGE`) instead of an in-memory sort of the
-    season. Page 1 reads 50 documents; page 1,000 reads 50,000 keys in ~47 ms.
-  - No index covers the profile. A filtered page reads documents along the board until
-    the page is full, and the count reads them all. The worst case is a rare spec on
-    `world` (Fire mage, 34 of 52,725): ~93 ms plus ~36 ms for the count, uncached.
-  - If this grows, the index to propose to Rankwarden is
-    `{ season: 1, 'profile.specId': 1, mythicScore: -1 }`, plus one led by
-    `profile.classId` or `profile.role`.
+- **Reads** are hinted by name to Rankwarden's board index for the filter
+  (`MplusBoardIndexes` in `src/database/collections.ts`, live and archive, world and
+  region), so a page is an index walk in score order. The count uses the same hint.
+  - The board is chosen in this order: the spec board with a spec; else the class board
+    with a class (a `role` beside it is checked on the documents); else the role board;
+    else the score board.
+  - The live collection has no score board without region. On `world`,
+    `region: { $in: [all five] }` lets `mplus_score_board`'s per-region ranges merge in
+    order (`SORT_MERGE`) instead of an in-memory sort.
+  - On the 269,722-character season, every page reads about one page of documents:
+    unfiltered `world` p1 takes 6 ms (count 27 ms), and Fire mage on `world` takes 2 ms.
+- **Coverage.** Every character is listed, and each entry carries `isFullyCovered`. The
+  board is not filtered on it: the front end flags characters whose runs miss a dungeon
+  of the season, whose `mythicScore` is therefore a partial sum.
+  - About 36% of live characters are covered, and about 8% of the archive. The top of the
+    board is covered; uncovered characters appear lower down (a Fire mage at #67, 7 of 8
+    dungeons).
+  - Rankwarden also has `*_covered_board` indexes, for a covered-only board if one is
+    ever wanted. They are not used.
 - **Shape.** `{ region, season, current, class, spec, role, page, pageSize, total,
   totalPages, entries }`.
   - Each entry has `rank` (its place on the filtered board), then `characterName`,
-    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, the stored `profile`, and
+    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, `isFullyCovered`, the
+    stored `profile`, and
     `dungeonRuns` as stored (with `completedAt` as an ISO string).
   - Dungeons are not enriched from `mplus_dungeons`: the front end reads them separately.
 - **Ties.** Many characters share a score (several at 4265.1 at the top). The order among

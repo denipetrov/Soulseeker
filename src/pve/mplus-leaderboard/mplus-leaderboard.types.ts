@@ -13,6 +13,12 @@ export interface MplusLeaderboardEntry {
   region: string;
   faction: string | null;
   mythicScore: number;
+  /**
+   * Whether the stored runs cover every dungeon of the season. When false,
+   * `mythicScore` is a partial sum: some dungeons' runs sit below what
+   * Rankwarden reads, so the character may rank lower than their real score.
+   */
+  isFullyCovered: boolean;
   profile: MplusCharacterDocument['profile'];
   /**
    * The best run per dungeon, highest score first, as stored (`completedAt`

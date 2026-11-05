@@ -63,6 +63,12 @@ export interface MplusCharacterDocument {
   };
   mythicScore: number;
   dungeonsCovered: number;
+  /**
+   * Whether `dungeonRuns` covers every dungeon the season lists, so that
+   * `mythicScore` is the whole score rather than a partial sum. False when the
+   * season's dungeon list is unknown. Indexed with `mythicScore` by Rankwarden.
+   */
+  isFullyCovered: boolean;
   /** Best run per dungeon, highest score first. */
   dungeonRuns: DungeonRun[];
   updatedAt: Date;

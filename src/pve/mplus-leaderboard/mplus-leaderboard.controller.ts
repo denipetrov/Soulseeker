@@ -40,6 +40,7 @@ const EXAMPLE: MplusLeaderboardResponse = {
       region: 'us',
       faction: 'alliance',
       mythicScore: 4136.1,
+      isFullyCovered: true,
       profile: {
         classId: 7,
         className: 'Shaman',
@@ -85,7 +86,9 @@ export class MplusLeaderboardController {
       '`season` defaults to `current`; a past season is read from the archive, and ' +
       '`current` in the response says which. Filter by `class`, `class` + `spec`, `role`, ' +
       'or `class` + `role`; `spec` and `role` do not go together. `rank` is the place on ' +
-      'the filtered board. Dungeons come as stored, by id. Pages are cached for 5 minutes.',
+      'the filtered board. Every character is listed: `isFullyCovered` false means their ' +
+      'runs miss some dungeon of the season, so `mythicScore` is partial. Dungeons come as ' +
+      'stored, by id. Pages are cached for 5 minutes.',
   })
   @ApiZodQuery(mplusLeaderboardQuerySchema)
   @ApiOkResponse({ description: 'One page of the board.', schema: { example: EXAMPLE } })
