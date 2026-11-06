@@ -71,12 +71,12 @@ interface RaidDocument extends Omit<CatalogueRaid, 'shortName' | 'icon' | 'start
 /** The end Raider.io gives a raid still open, until the real one is known. */
 const OPEN_END = Date.UTC(2030, 0, 1);
 
-const isoDates = (dates: Record<string, Date> | undefined): Record<string, string> =>
+export const isoDates = (dates: Record<string, Date> | undefined): Record<string, string> =>
   Object.fromEntries(
     Object.entries(dates ?? {}).map(([region, date]) => [region, new Date(date).toISOString()]),
   );
 
-const endDates = (dates: Record<string, Date> | undefined): Record<string, string | null> =>
+export const endDates = (dates: Record<string, Date> | undefined): Record<string, string | null> =>
   Object.fromEntries(
     Object.entries(dates ?? {}).map(([region, date]) => {
       const time = new Date(date).getTime();
@@ -105,7 +105,7 @@ function firstStart(starts: Record<string, Date> | undefined): number {
 }
 
 /** Newest expansion first, then the latest to open within it. */
-const newestFirst = (
+export const newestFirst = (
   a: { expansionId: number; starts?: Record<string, Date> },
   b: { expansionId: number; starts?: Record<string, Date> },
 ) => b.expansionId - a.expansionId || firstStart(b.starts) - firstStart(a.starts);

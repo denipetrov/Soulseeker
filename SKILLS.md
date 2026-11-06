@@ -650,6 +650,34 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     end resolves it to an image.
 - **503** only when the list is missing from Redis and Mongo cannot be read.
 
+### PvE Mythic+ seasons
+
+`GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its
+dungeons and cutoffs, plus every affix: `{ seasons, affixes }`. It reads three small
+collections whole.
+
+- **Seasons** come from `mplus_seasons`, newest first (the catalogue's `newestFirst`). Each
+  has `slug`, `name`, `shortName`, `expansionId`, `blizzardSeasonId`, and `starts` and
+  `ends` per region. A running season's `2030-01-01` end is null, as on `/pve/raids`. The
+  `archive` marker is Rankwarden's bookkeeping and is left out.
+- **Dungeons.** Each season's `dungeonIds` is replaced by the full `mplus_dungeons`
+  documents in the season's order: `id`, `slug`, `name`, `shortName`, `challengeModeId`,
+  `keystoneTimerSeconds`, `iconUrl`, `backgroundImageUrl`, `expansionIds`.
+  - A dungeon runs in several seasons, so it repeats.
+  - An id the collection lacks keeps its `id`, with nulls. No season has one today.
+- **Cutoffs** per region as stored: `status`, `updatedAt`, `keystones` (title cutoffs) and
+  `quantiles` (`p999`, `p990`), each with `alliance`, `horde` and `all`. The fetch
+  bookkeeping (`fetchedAt`, `attempts`, `finalised`) is dropped. It is empty for a season
+  Rankwarden has none for; today only TWW 3, MN 1 and MN 2 have cutoffs.
+- **Affixes** from `mplus_affixes`, by id. They are not linked to seasons.
+- **Size and cache.** ~135 KB before compression, ~15 KB as brotli, ~30 ms uncached. The
+  whole answer is one Redis value, `ss:cache:pve:mplus-season-list`, filled on demand and
+  kept for `MPLUS_SEASONS_CACHE_TTL_SECONDS` (1 h), since a live season's cutoffs move
+  every M+ pass.
+  - The key is deliberately not `pve:mplus-seasons`: that is `PveCatalogue`'s slim season
+    list. The two once shared it, and each then served the other's shape. The test now
+    fills the catalogue's key first, to keep it so.
+
 ### PvE Mythic+ leaderboard
 
 `GET /pve/mplus-leaderboard` (`src/pve/mplus-leaderboard/`) returns Mythic+ characters by
