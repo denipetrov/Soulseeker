@@ -714,6 +714,39 @@ one page at a time.
 - **Cache.** Pages and totals are kept in Redis for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min).
   A 100-run page is ~135 KB before compression.
 
+### PvE Mythic+ compositions
+
+`GET /pve/mplus-compositions` (`src/pve/mplus-compositions/`) returns the 50 most played
+party compositions among a board's best runs.
+
+- **Parameters.** `region`, `season` and `dungeon` are those of `/pve/mplus-runs` (one
+  schema, `mplusRunBoardSchema`). `top` is how many of the board's best runs to count:
+  default 1000, 1–10,000. There is no paging.
+- **Same board as the runs.** `MplusRunsService.board()` resolves the season (live or
+  archive), checks the dungeon (**404**), and gives the collection, filter and index hint.
+  Both endpoints read exactly the same runs, `missedSince` excluded.
+- **Composition.** The party's five class and spec pairs, whoever played them and in
+  whatever roster order (`topCompositions`, `compositions.ts`, unit-tested).
+  - Each roster is sorted tank, healer, damage dealers, then by class and spec id, so
+    reordered rosters match.
+  - Two specs of one class are different compositions. A member without a spec (rare) is
+    kept, with null spec.
+  - Equal counts rank by their best run: the runs are read best first, and the order of
+    first appearance is kept.
+- **Shape.** `{ region, season, current, dungeon, top, runs, compositions }`.
+  - `runs` is the runs read (`top`, or fewer on a smaller board).
+  - Each composition has `rank`, `count`, `share` (of `runs`, 0–1, four places) and
+    `members`. Each member has `class` and `spec` slugs (from `CLASS_IDS` / `SPEC_IDS`;
+    null for an unknown id), plus the stored `classId`, `className`, `specId`, `specName`
+    and `role`.
+- **Reads.** One index walk of `top` runs, projected to `roster.classId`, `className`,
+  `specId`, `specName` and `role`; grouping happens in the app. The default takes ~80 ms;
+  `top=10000` ~0.4 s.
+- **Cache.** Redis, per board and `top` (`pve:mplus-compositions:<region>:<season>:<dungeon>:<top>`),
+  for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min), as the runs.
+- **Real data** (MN 2, world, top 1000): one party finished 52.6% of the runs (Blood DK,
+  Holy Paladin, Arms, Subtlety, Elemental). The top 50 cover 96.5% of the runs.
+
 ### PvE Mythic+ seasons
 
 `GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its

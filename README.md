@@ -88,6 +88,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | token | One guild from Raider.io, one widget per call: the summary (current raids' progression and rankings, ranks 0–1), `showFullRoster=true` (never cached), `raidEncounters=<raid>&difficulty=<difficulty>`, or the same plus `boss=<boss>` for that kill with its roster; cached 1 h, boss kills 24 h |
 | `GET /pve/raids` | token | Every raid Rankwarden catalogues: bosses, icon, regional start and end dates |
 | `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row&page=1` | token | The Mythic+ run board, paged; past seasons from the archive |
+| `GET /pve/mplus-compositions?region=world&season=current&dungeon=murder-row&top=1000` | token | The 50 most played party compositions among a board's best runs |
 | `GET /pve/mplus-seasons` | token | Every Mythic+ season with its dungeons and cutoffs, and every affix |
 | `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane&page=1` | token | The Mythic+ character leaderboard, paged; past seasons from the archive |
 | `GET /pve/raid?raidSlug=the-venomous-abyss&region=world&difficulty=mythic` | token | One raid and its top hundred guilds for a region and difficulty, with every boss pulled and killed |

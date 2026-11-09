@@ -9,36 +9,40 @@ import { slugSchema, WORLD } from '../../bosses/dto/bosses-query.dto.js';
 import { MPLUS_BOARDS } from '../../mplus-leaderboard/dto/mplus-leaderboard-query.dto.js';
 import { CURRENT_SEASON } from '../../shared/mplus-season.resolver.js';
 
+/** A run board: `world` or a region, a season, and every dungeon or one. */
+export const mplusRunBoardSchema = z.object({
+  region: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(z.enum(MPLUS_BOARDS))
+    .default(WORLD)
+    .meta({
+      description: '`world` (the default), or one region.',
+      enum: [...MPLUS_BOARDS],
+      example: 'eu',
+    }),
+  season: slugSchema.default(CURRENT_SEASON).meta({
+    description:
+      'A Mythic+ season slug, e.g. `season-mn-1`, or `current` (the default). A past ' +
+      'season is read from the archive.',
+    example: 'season-mn-2',
+  }),
+  dungeon: slugSchema.optional().meta({
+    description:
+      'A dungeon slug of the season, as `GET /pve/mplus-seasons` lists them: that ' +
+      "dungeon's runs only.",
+    example: 'murder-row',
+  }),
+});
+
 /**
  * `GET /pve/mplus-runs?region=eu&season=current&dungeon=murder-row&page=1&pageSize=50`
  *
  * Every parameter is optional.
  */
-export const mplusRunsQuerySchema = z
-  .object({
-    region: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .pipe(z.enum(MPLUS_BOARDS))
-      .default(WORLD)
-      .meta({
-        description: '`world` (the default), or one region.',
-        enum: [...MPLUS_BOARDS],
-        example: 'eu',
-      }),
-    season: slugSchema.default(CURRENT_SEASON).meta({
-      description:
-        'A Mythic+ season slug, e.g. `season-mn-1`, or `current` (the default). A past ' +
-        'season is read from the archive.',
-      example: 'season-mn-2',
-    }),
-    dungeon: slugSchema.optional().meta({
-      description:
-        'A dungeon slug of the season, as `GET /pve/mplus-seasons` lists them: that ' +
-        "dungeon's runs only.",
-      example: 'murder-row',
-    }),
+export const mplusRunsQuerySchema = mplusRunBoardSchema
+  .extend({
     page: z.coerce.number().int().positive().default(1).meta({ description: '1-based page.' }),
     pageSize: z.coerce
       .number()

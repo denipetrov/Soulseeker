@@ -12,6 +12,8 @@ import { GuildController } from './guild/guild.controller.js';
 import { GuildService } from './guild/guild.service.js';
 import { MplusLeaderboardController } from './mplus-leaderboard/mplus-leaderboard.controller.js';
 import { MplusLeaderboardService } from './mplus-leaderboard/mplus-leaderboard.service.js';
+import { MplusCompositionsController } from './mplus-compositions/mplus-compositions.controller.js';
+import { MplusCompositionsService } from './mplus-compositions/mplus-compositions.service.js';
 import { MplusRunsController } from './mplus-runs/mplus-runs.controller.js';
 import { MplusRunsService } from './mplus-runs/mplus-runs.service.js';
 import { MplusSeasonsController } from './mplus-seasons/mplus-seasons.controller.js';
@@ -26,7 +28,8 @@ import { MplusSeasonResolver } from './shared/mplus-season.resolver.js';
  * PvE pages from Raider.io: characters (raids, Mythic+ scores and runs, gear and
  * talents) and guilds (progression, rankings, roster, raid encounters, boss kills);
  * the raid list and one raid's top guilds, from Rankwarden's `raids`; and each boss's first
- * kills, from its `bosses`; the Mythic+ character and run boards; and the Mythic+ seasons,
+ * kills, from its `bosses`; the Mythic+ character and run boards and the most played
+ * compositions; and the Mythic+ seasons,
  * dungeons and affixes.
  */
 @Module({
@@ -40,6 +43,7 @@ import { MplusSeasonResolver } from './shared/mplus-season.resolver.js';
     MplusLeaderboardController,
     MplusSeasonsController,
     MplusRunsController,
+    MplusCompositionsController,
   ],
   providers: [
     PveCharacterService,
@@ -51,6 +55,7 @@ import { MplusSeasonResolver } from './shared/mplus-season.resolver.js';
     MplusSeasonsService,
     MplusSeasonResolver,
     MplusRunsService,
+    MplusCompositionsService,
   ],
 })
 export class PveModule {}

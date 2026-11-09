@@ -401,7 +401,10 @@ export const envSchema = z.object({
    * reused. Short enough for a live season's cutoffs, which move every M+ pass.
    */
   MPLUS_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
-  /** How long one Mythic+ run board page, and the board's total, is reused. */
+  /**
+   * How long one Mythic+ run board page, the board's total, and its composition counts
+   * are reused.
+   */
   MPLUS_RUNS_CACHE_TTL_SECONDS: positiveInt(300),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
