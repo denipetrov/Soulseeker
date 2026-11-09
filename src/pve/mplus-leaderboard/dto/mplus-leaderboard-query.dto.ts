@@ -9,11 +9,10 @@ import {
 } from '../../../pvp/leaderboard/dto/leaderboard-query.dto.js';
 import { SPECS_BY_CLASS } from '../../../pvp/specs.js';
 import { slugSchema, WORLD } from '../../bosses/dto/bosses-query.dto.js';
+import { CURRENT_SEASON } from '../../shared/mplus-season.resolver.js';
 
 /** Every region together. */
 export const MPLUS_BOARDS = [WORLD, ...RAIDERIO_REGIONS] as const;
-/** `season=current`: the live season, from `mplus_season_state`. */
-export const CURRENT_SEASON = 'current';
 export const MPLUS_ROLES = ['tank', 'healer', 'dps'] as const;
 
 const slugOf = z

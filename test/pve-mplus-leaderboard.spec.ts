@@ -51,6 +51,8 @@ const character = (
     faction: 'horde',
     profile: { ...PROFILES[profile], raceId: 1, raceName: 'Human', level: 90 },
     mythicScore,
+    // Climbed 10 since the last write; the archive writes once, so none there.
+    previousMythicScore: season === LIVE ? mythicScore - 10 : null,
     dungeonsCovered: isFullyCovered ? 8 : 1,
     isFullyCovered,
     dungeonRuns: [
@@ -182,6 +184,7 @@ describe('GET /pve/mplus-leaderboard', () => {
       region: 'eu',
       faction: 'horde',
       mythicScore: 4000,
+      previousMythicScore: 3990,
       isFullyCovered: true,
       profile: {
         classId: 8,
@@ -213,6 +216,22 @@ describe('GET /pve/mplus-leaderboard', () => {
       false,
       true,
     ]);
+  });
+
+  it('gives the previous score: null in the archive, and where it was never stored', async () => {
+    const archived = await board(`season=${PAST}`);
+    expect(archived.body.entries.map((e: Json) => e.previousMythicScore)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+
+    // A document written before Rankwarden began recording it.
+    await db
+      .collection('mplus_characters')
+      .updateOne({ season: LIVE, mythicScore: 3500 }, { $unset: { previousMythicScore: '' } });
+    const { body } = await board('region=us&class=mage&spec=arcane');
+    expect(body.entries[0]).toMatchObject({ mythicScore: 3500, previousMythicScore: null });
   });
 
   it('pages, with ranks carrying on from page to page', async () => {

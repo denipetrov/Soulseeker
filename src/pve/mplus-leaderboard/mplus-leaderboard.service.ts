@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Filter } from 'mongodb';
 
@@ -9,10 +9,9 @@ import { MongoService } from '../../database/mongo.service.js';
 import { CLASS_IDS, SPEC_IDS } from '../../pvp/specs.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
 import { CacheService } from '../../redis/cache.service.js';
-import { CurrentSeasons } from '../../seasons/current-seasons.service.js';
-import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import { WORLD } from '../bosses/dto/bosses-query.dto.js';
-import { CURRENT_SEASON, type MplusLeaderboardQuery } from './dto/mplus-leaderboard-query.dto.js';
+import { MplusSeasonResolver } from '../shared/mplus-season.resolver.js';
+import type { MplusLeaderboardQuery } from './dto/mplus-leaderboard-query.dto.js';
 import type { MplusLeaderboardEntry, MplusLeaderboardResponse } from './mplus-leaderboard.types.js';
 
 const PROJECTION = {
@@ -23,6 +22,7 @@ const PROJECTION = {
   region: 1,
   faction: 1,
   mythicScore: 1,
+  previousMythicScore: 1,
   isFullyCovered: 1,
   profile: 1,
   dungeonRuns: 1,
@@ -36,6 +36,7 @@ type Row = Pick<
   | 'region'
   | 'faction'
   | 'mythicScore'
+  | 'previousMythicScore'
   | 'isFullyCovered'
   | 'profile'
   | 'dungeonRuns'
@@ -70,23 +71,14 @@ export class MplusLeaderboardService {
   constructor(
     private readonly mongo: MongoService,
     private readonly cache: CacheService,
-    private readonly currentSeasons: CurrentSeasons,
-    private readonly catalogue: PveCatalogue,
+    private readonly seasons: MplusSeasonResolver,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('MPLUS_LEADERBOARD_CACHE_TTL_SECONDS', { infer: true });
   }
 
   async leaderboard(query: MplusLeaderboardQuery): Promise<MplusLeaderboardResponse> {
-    const current = await this.currentSeason(query.region);
-    const season = query.season === CURRENT_SEASON ? current : query.season;
-
-    if (!season) {
-      throw new NotFoundException({ message: 'No current Mythic+ season recorded' });
-    }
-    if (!(await this.catalogue.mplusSeason(season))) {
-      throw new NotFoundException({ message: `No Mythic+ season ${season} in the catalogue` });
-    }
+    const { slug: season, live } = await this.seasons.resolve(query.region, query.season);
 
     const key = [
       'pve:mplus-board',
@@ -101,23 +93,11 @@ export class MplusLeaderboardService {
 
     const page = await this.cache.getOrLoad(
       key,
-      () => this.page(query, season, season === current),
+      () => this.page(query, season, live),
       this.cacheTtlSeconds,
     );
 
     return page!;
-  }
-
-  /** The live season of a region; on `world`, the newest any region is on. */
-  private async currentSeason(region: string): Promise<string | null> {
-    const states = await this.currentSeasons.mplusSeasons();
-    if (region !== WORLD) return states.find((state) => state.region === region)?.season ?? null;
-
-    const live = new Set(states.map((state) => state.season));
-    // The catalogue lists seasons newest first.
-    const newest = (await this.catalogue.mplusSeasons()).find((s) => live.has(s.slug));
-
-    return newest?.slug ?? states[0]?.season ?? null;
   }
 
   private async page(
@@ -187,6 +167,7 @@ function entry(row: Row, rank: number): MplusLeaderboardEntry {
     region: row.region,
     faction: row.faction ?? null,
     mythicScore: row.mythicScore,
+    previousMythicScore: row.previousMythicScore ?? null,
     isFullyCovered: row.isFullyCovered ?? false,
     profile: row.profile,
     dungeonRuns: (row.dungeonRuns ?? []).map((run) => ({

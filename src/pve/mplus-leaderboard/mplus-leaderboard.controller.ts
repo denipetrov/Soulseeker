@@ -40,6 +40,7 @@ const EXAMPLE: MplusLeaderboardResponse = {
       region: 'us',
       faction: 'alliance',
       mythicScore: 4136.1,
+      previousMythicScore: 4121.4,
       isFullyCovered: true,
       profile: {
         classId: 7,
@@ -87,7 +88,9 @@ export class MplusLeaderboardController {
       '`current` in the response says which. Filter by `class`, `class` + `spec`, `role`, ' +
       'or `class` + `role`; `spec` and `role` do not go together. `rank` is the place on ' +
       'the filtered board. Every character is listed: `isFullyCovered` false means their ' +
-      'runs miss some dungeon of the season, so `mythicScore` is partial. Dungeons come as ' +
+      'runs miss some dungeon of the season, so `mythicScore` is partial. ' +
+      '`previousMythicScore` is the score before the latest Rankwarden write, for showing ' +
+      'movement; null on a first write and on archived seasons. Dungeons come as ' +
       'stored, by id. Pages are cached for 5 minutes.',
   })
   @ApiZodQuery(mplusLeaderboardQuerySchema)

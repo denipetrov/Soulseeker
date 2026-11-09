@@ -185,6 +185,10 @@ beforeAll(async () => {
       { id: 3177, slug: 'vorasius', name: 'Vorasius' },
     ],
   });
+  // Read once and held for a minute by `CurrentSeasons`: set before any lookup.
+  await db
+    .collection('mplus_season_state')
+    .insertOne({ region: 'us', season: 'season-mn-2', ended: false });
   await db.collection('mplus_seasons').insertOne({
     slug: 'season-mn-2',
     name: 'MN Season 2',
@@ -314,6 +318,67 @@ describe('GET /pve/character', () => {
         },
       ],
       profile: { className: 'Paladin', role: 'healer' },
+    });
+  });
+
+  describe('previousMythicScore', () => {
+    const stored = (season: string, mythicScore: number) => ({
+      season,
+      key: 'us/demon-soul/manongauz',
+      region: 'us',
+      realmSlug: 'demon-soul',
+      characterName: 'Manongauz',
+      mythicScore,
+    });
+
+    beforeEach(async () => {
+      await db.collection('mplus_characters').deleteMany({});
+    });
+
+    it('is the score Rankwarden held before the page, beside Raider.io’s', async () => {
+      await db.collection('mplus_characters').insertOne(stored('season-mn-2', 1700.4));
+
+      const { body } = await lookup();
+
+      expect(body.previousMythicScore).toBe(1700.4);
+      expect(body.mythicPlusScores[0]).toMatchObject({
+        season: 'season-mn-2',
+        scores: { all: 1760.9 },
+      });
+
+      // Kept with the cached page, not read again.
+      await db
+        .collection('mplus_characters')
+        .updateOne({ key: 'us/demon-soul/manongauz' }, { $set: { mythicScore: 1760.9 } });
+      expect((await lookup()).body.previousMythicScore).toBe(1700.4);
+    });
+
+    it('is null when Rankwarden has not stored the character', async () => {
+      expect((await lookup()).body.previousMythicScore).toBeNull();
+    });
+
+    it('is null when Raider.io already calls another season current', async () => {
+      await db.collection('mplus_characters').insertOne(stored('season-mn-2', 1700.4));
+      // A rollover Rankwarden has not seen yet: Raider.io is on the next season.
+      app.upstream.route((request) => {
+        if (request.path !== '/raiderio/characters/profile') return undefined;
+        const fields = request.query.get('fields')?.split(',') ?? [];
+        const body = Object.assign({ ...BASE }, ...fields.map(answerFor));
+        body.mythic_plus_scores_by_season = [
+          { season: 'season-mn-3', scores: { all: 120 }, segments: {} },
+        ];
+        return { status: 200, body };
+      });
+
+      expect((await lookup()).body.previousMythicScore).toBeNull();
+    });
+
+    it('is not on a widget answer', async () => {
+      await db.collection('mplus_characters').insertOne(stored('season-mn-2', 1700.4));
+
+      expect((await lookup('&mplusSeasonScore=season-mn-2')).body).not.toHaveProperty(
+        'previousMythicScore',
+      );
     });
   });
 

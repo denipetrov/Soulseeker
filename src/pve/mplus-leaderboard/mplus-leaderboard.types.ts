@@ -14,6 +14,12 @@ export interface MplusLeaderboardEntry {
   faction: string | null;
   mythicScore: number;
   /**
+   * `mythicScore` before Rankwarden's latest write: equal to it when the
+   * character gained nothing, lower when they climbed. Null on a character's
+   * first write, and always on an archived season.
+   */
+  previousMythicScore: number | null;
+  /**
    * Whether the stored runs cover every dungeon of the season. When false,
    * `mythicScore` is a partial sum: some dungeons' runs sit below what
    * Rankwarden reads, so the character may rank lower than their real score.

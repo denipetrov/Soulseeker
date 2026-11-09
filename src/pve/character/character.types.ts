@@ -117,6 +117,12 @@ export interface FullPart extends PveRunLists {
   /** The current season, then the previous one. `topPercent` is filled per answer. */
   mythicPlusScores: Omit<PveSeasonScores, 'topPercent'>[];
   mythicPlusRanks: Record<string, unknown> | null;
+  /**
+   * The score Rankwarden held for the current season when this part was
+   * fetched, before the push that followed. Absent on parts cached before it
+   * was recorded.
+   */
+  previousMythicScore?: number | null;
 }
 
 /** One raid, for `raidProgression=<slug>`. */
@@ -176,6 +182,14 @@ export interface PveCharacterResponse extends Partial<PveRunLists> {
   raidBosses?: Record<string, RaidBoss[]> | null;
   mythicPlusScores?: PveSeasonScores[];
   mythicPlusRanks?: Record<string, unknown> | null;
+  /**
+   * The whole page only: the current season's score as Rankwarden stored it
+   * before this page was fetched — read alongside Raider.io, then brought up to
+   * date by the push that follows — to set against `mythicPlusScores[0]`, the
+   * score Raider.io gives now. Null when Rankwarden had not stored the
+   * character for that season.
+   */
+  previousMythicScore?: number | null;
   /** When the oldest Raider.io part of the answer was fetched. */
   fetchedAt: string;
   /** Served past its freshness because Raider.io could not be asked. */

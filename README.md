@@ -87,6 +87,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pve/character?region=us&realmSlug=demon-soul&characterName=Manongauz` | token | One PvE character from Raider.io: gear, talents, guild, current raids, M+ scores, ranks and best runs; `raidProgression=<raid>` and/or `mplusSeasonScore=<season>` for just those; cached 1 h, `forceRefresh=true` once per 5 min; pushes the season's runs to Rankwarden |
 | `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | token | One guild from Raider.io, one widget per call: the summary (current raids' progression and rankings, ranks 0–1), `showFullRoster=true` (never cached), `raidEncounters=<raid>&difficulty=<difficulty>`, or the same plus `boss=<boss>` for that kill with its roster; cached 1 h, boss kills 24 h |
 | `GET /pve/raids` | token | Every raid Rankwarden catalogues: bosses, icon, regional start and end dates |
+| `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row&page=1` | token | The Mythic+ run board, paged; past seasons from the archive |
 | `GET /pve/mplus-seasons` | token | Every Mythic+ season with its dungeons and cutoffs, and every affix |
 | `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane&page=1` | token | The Mythic+ character leaderboard, paged; past seasons from the archive |
 | `GET /pve/raid?raidSlug=the-venomous-abyss&region=world&difficulty=mythic` | token | One raid and its top hundred guilds for a region and difficulty, with every boss pulled and killed |

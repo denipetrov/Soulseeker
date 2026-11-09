@@ -62,6 +62,13 @@ export interface MplusCharacterDocument {
     role: string | null;
   };
   mythicScore: number;
+  /**
+   * The `mythicScore` stored before Rankwarden's latest write, whether or not it
+   * changed: equal to it when the character gained nothing. Null on a
+   * character's first write, and always on the archive's copies (written once).
+   * Absent on documents written before Rankwarden began recording it.
+   */
+  previousMythicScore?: number | null;
   dungeonsCovered: number;
   /**
    * Whether `dungeonRuns` covers every dungeon the season lists, so that

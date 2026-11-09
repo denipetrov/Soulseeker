@@ -102,9 +102,14 @@ function runOf(run: RaiderIoBestRun): PveRun {
 
 const runsOf = (runs: RaiderIoBestRun[] | undefined): PveRun[] => (runs ?? []).map(runOf);
 
-export function fullPartOf(payload: RaiderIoCharacterPayload, fetchedAt: Date): FullPart {
+export function fullPartOf(
+  payload: RaiderIoCharacterPayload,
+  fetchedAt: Date,
+  previousMythicScore: number | null = null,
+): FullPart {
   return {
     fetchedAt: fetchedAt.toISOString(),
+    previousMythicScore,
     character: baseOf(payload),
     guild: payload.guild ? { name: payload.guild.name, realm: payload.guild.realm ?? null } : null,
     gear: payload.gear
@@ -302,6 +307,7 @@ export function responseOf(
     response.raidAchievementCurve = full.raidAchievementCurve ?? [];
     response.mythicPlusScores = withTopPercent(full.mythicPlusScores);
     response.mythicPlusRanks = full.mythicPlusRanks;
+    response.previousMythicScore = full.previousMythicScore ?? null;
     response.mythicPlusBestRuns = full.mythicPlusBestRuns;
     response.mythicPlusRecentRuns = full.mythicPlusRecentRuns ?? [];
     response.mythicPlusHighestLevelRuns = full.mythicPlusHighestLevelRuns ?? [];

@@ -401,6 +401,8 @@ export const envSchema = z.object({
    * reused. Short enough for a live season's cutoffs, which move every M+ pass.
    */
   MPLUS_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long one Mythic+ run board page, and the board's total, is reused. */
+  MPLUS_RUNS_CACHE_TTL_SECONDS: positiveInt(300),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
   /** How long an expired guild part is kept past its TTL, to be served stale. */

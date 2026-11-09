@@ -558,6 +558,25 @@ kills from Blizzard's `encounters/raids`.
   - The profile sends class, spec, race and role. The base profile's `HEALING` / `TANK` /
     `DPS` is spelled `healer` / `tank` / `dps`, as runs and Rankwarden spell it.
   - Nothing is pushed without a run in the season.
+- **`previousMythicScore`** (whole page only). The order is: read Raider.io and the stored
+  score together, answer, then sync.
+  - While the full page is fetched from Raider.io, the character's stored `mythicScore` for
+    the region's current season (`mplus_season_state`) is read from `mplus_characters` in
+    parallel, by `key` (`region/realm/lowercased name`). That is the score before this
+    page's push. `mythicPlusScores[0].scores.all`, Raider.io's, is the score now. The push
+    that follows brings Rankwarden up to date, so the next fresh page compares against it.
+  - It is cached with the full part, so a cached page answers the value it was fetched
+    with. It is absent on widget answers (`raidProgression`, `mplusSeasonScore`).
+  - It is null when Rankwarden has not stored the character for that season, or when
+    Raider.io's current season is not the stored one (a rollover Rankwarden has not seen).
+  - A failed read gives null and a warning; it never fails the page.
+  - Real check: Rooiben (eu/sylvanas) had 4366.7 stored, and Raider.io answered 4378.1.
+  - The two scores are not the same measure: Rankwarden's is summed over the runs it
+    stores. Once the push lands Raider.io's best runs, a fully covered character's stored
+    score follows Raider.io's.
+- **Docker.** `docker-compose.yml` points the app at `http://host.docker.internal:3000` for
+  Rankwarden, as it does for MongoDB. With `.env`'s `localhost:3000`, the container called
+  itself and every push failed with `ECONNREFUSED`.
 
 ### PvE guild
 
@@ -650,6 +669,51 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     end resolves it to an image.
 - **503** only when the list is missing from Redis and Mongo cannot be read.
 
+### PvE Mythic+ runs
+
+`GET /pve/mplus-runs` (`src/pve/mplus-runs/`) returns timed runs by `score`, best first,
+one page at a time.
+
+- **Parameters** (all optional):
+  - `region`: `world` (default) or `us`, `eu`, `kr`, `tw`, `cn`.
+  - `season`: a slug or `current` (default).
+  - `dungeon`: a dungeon slug of that season.
+  - `page` and `pageSize`: the same paging as the leaderboards.
+- **Season.** `MplusSeasonResolver` (`src/pve/shared/`, shared with the M+ leaderboard)
+  resolves `current` and says whether the season is live.
+  - Live reads `mplus_runs` (~800,000 runs this season: 160k per region, 20k per dungeon
+    per region). Any other season reads `mplus_archive_runs` (7–10k per season).
+  - An unknown slug is a **404**.
+- **Dungeon.** The slug is looked up among the season's dungeons in
+  `MplusSeasonsService`'s cached list, and the board filters on its id (`dungeon.id`, which
+  the indexes carry). A dungeon the season does not run is a **404**: Murder Row is not in
+  MN 1.
+- **Reads** are hinted by name (`MplusRunIndexes`).
+  - Live: `run_board` or `run_dungeon_board`. On `world`, `region: { $in: [all five] }`
+    merges the regions in score order.
+  - Archive: `archive_run_board`, `archive_run_region_board` or
+    `archive_run_dungeon_board`. There is no region + dungeon index, so that board walks
+    the dungeon's range and checks the region.
+  - Live runs with `missedSince` (about to be pruned by Rankwarden) are never listed, as
+    Rankwarden's reader rules say.
+- **Total.** The `missedSince` check means every run is fetched to count. The live `world`
+  total costs ~0.5 s, against ~50 ms from the index alone. It is counted per board, not
+  per page, and cached apart (`<board>:total`), so every page of a board shares one count.
+  The first `world` request takes ~0.6 s; later ones ~30 ms.
+- **Paging** stops at row 200,000 (`MAX_OFFSET`, as on the other boards; ~0.4 s at that
+  depth). `totalPages` is capped at the last reachable page, so the live `world` board
+  shows 4,001 pages of 50, not 16,016. A page past it is a **400**.
+- **Shape.** `{ region, season, current, dungeon, page, pageSize, total, totalPages, runs }`.
+  - Each run has `rank` (its place on this board; the stored `rank` is the place on the
+    Raider.io board it was read from, and is dropped), `keystoneRunId`, `region`, `score`,
+    `dungeon` (`{ id, name, slug, shortName }`), `mythicLevel`, `clearTimeMs`,
+    `keystoneTimeMs`, `timeRemainingMs`, `numChests`, `completedAt`, `affixIds`, `faction`
+    and `roster` (five members, as stored).
+  - `rosterKeys` and `fetchedAt` are Rankwarden's and are left out.
+  - Affixes come by id: `/pve/mplus-seasons` lists them.
+- **Cache.** Pages and totals are kept in Redis for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min).
+  A 100-run page is ~135 KB before compression.
+
 ### PvE Mythic+ seasons
 
 `GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its
@@ -725,10 +789,18 @@ collections whole.
 - **Shape.** `{ region, season, current, class, spec, role, page, pageSize, total,
   totalPages, entries }`.
   - Each entry has `rank` (its place on the filtered board), then `characterName`,
-    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, `isFullyCovered`, the
-    stored `profile`, and
+    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, `previousMythicScore`,
+    `isFullyCovered`, the stored `profile`, and
     `dungeonRuns` as stored (with `completedAt` as an ISO string).
   - Dungeons are not enriched from `mplus_dungeons`: the front end reads them separately.
+- **`previousMythicScore`** is the `mythicScore` before Rankwarden's latest write: equal
+  when the character gained nothing, lower when they climbed. It lets the front end show
+  movement.
+  - It is null on a character's first write, and always on archived seasons (written
+    once). A document written before Rankwarden recorded it also answers null.
+  - Only this endpoint carries it. The other PvE endpoints that return characters have no
+    stored score: search suggestions and the run rosters have none, and `/pve/character`
+    shows Raider.io's own score, which Rankwarden's previous score does not describe.
 - **Ties.** Many characters share a score (several at 4265.1 at the top). The order among
   equal scores is the index's, stable from page to page.
 - **Cache.** Pages are cached in Redis for `MPLUS_LEADERBOARD_CACHE_TTL_SECONDS` (5 min).
