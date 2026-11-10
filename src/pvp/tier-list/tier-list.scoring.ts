@@ -13,11 +13,13 @@ export const MIN_RATING = 1_500;
  */
 export const AVERAGE_RATING_PRIOR_WEIGHT = 50;
 
-/** A spec's average rating, pulled toward `MIN_RATING` by how few players it has. */
-export function adjustedAverage(count: number, average: number): number {
+/**
+ * A spec's average, pulled toward `floor` — the lowest value counted, `MIN_RATING`
+ * on a PvP ladder — by how few players it has.
+ */
+export function adjustedAverage(count: number, average: number, floor = MIN_RATING): number {
   return (
-    (count * average + AVERAGE_RATING_PRIOR_WEIGHT * MIN_RATING) /
-    (count + AVERAGE_RATING_PRIOR_WEIGHT)
+    (count * average + AVERAGE_RATING_PRIOR_WEIGHT * floor) / (count + AVERAGE_RATING_PRIOR_WEIGHT)
   );
 }
 
@@ -183,6 +185,8 @@ export function scoreTierList(
   top: readonly SpecRef[],
   groups: readonly SpecGroup[],
   specs: readonly { class: string; spec: string }[] = [],
+  /** The lowest value the groups counted: 1500 rating on PvP, 2000 score on Mythic+. */
+  floor = MIN_RATING,
 ): TierListSpec[] {
   if (groups.length === 0 && !top.some((row) => row.class && row.spec)) return [];
 
@@ -222,7 +226,7 @@ export function scoreTierList(
   const averageRating = rankPoints(
     list.map((s) => {
       const group = groupOf(s);
-      return group ? adjustedAverage(group.count, group.averageRating) : null;
+      return group ? adjustedAverage(group.count, group.averageRating, floor) : null;
     }),
     FACTOR_POINTS.averageRating,
   );
@@ -258,7 +262,9 @@ export function scoreTierList(
         },
         averageRating: {
           value: group ? round(group.averageRating, 1) : null,
-          adjusted: group ? round(adjustedAverage(group.count, group.averageRating), 1) : null,
+          adjusted: group
+            ? round(adjustedAverage(group.count, group.averageRating, floor), 1)
+            : null,
           score: round(averageRating[i]!, 2),
         },
       },

@@ -779,6 +779,40 @@ Mythic+ season's best runs were played with, from Rankwarden's `mplus_spec_repre
 - **404** for a missing snapshot (`kr` before Rankwarden counts it, `season-tww-1`), a
   season the catalogue does not know, or a dungeon the season does not run.
 
+### PvE tier list
+
+`GET /pve/tier-list?region=` (`src/pve/tier-list/`) is the PvP tier list's rules and
+shape, applied to the current Mythic+ season.
+
+- **Same scoring.** `scoreTierList` from `src/pvp/tier-list/tier-list.scoring.ts`, unchanged:
+  - top tier density 45, representation 35, average 20;
+  - rank-based points;
+  - the average weighed by count (50 phantom players at the floor);
+  - every `ALL_SPECS` spec listed;
+  - S/A/B/C/D lines at 10/25/30/25/10 %, moved to the widest drop within 2 specs.
+  The only change is the floor, which is now a parameter (`floor`, default `MIN_RATING`
+  1500), so PvP is unaffected.
+- **Mythic+ mapping.**
+  - The ladder is `mplus_characters` by `mythicScore`, each character counted once for its
+    profile spec. Ids become slugs through `classSlugOf` / `specSlugOf`.
+  - The floor is **2000, Keystone Master** (`MPLUS_MIN_SCORE`), PvP's 1500 counterpart.
+  - **Density** reads the board's top 5,000, everyone, as the leaderboard lists them
+    (`mplus_score_board`, regions merged on `world`). Today all 5,000 are fully covered.
+  - **Representation and average** count only **fully covered** characters at or above
+    2000 (`mplus_covered_board` / `_region_board`). A partial score is a partial sum (443
+    on average over one dungeon, against 3,691 over eight), so including them would rank
+    specs by Rankwarden's coverage. The user chose both the coverage rule and the floor.
+- **Parameters.** `region` only: `world` (default) or `us`, `eu`, `kr`, `tw`, `cn`. The
+  season is always the current one, as on PvP.
+- **Shape.** As PvP's, with `season` (slug) and `seasonName` in place of
+  `bracket`/`seasonId`, and `minScore` in place of `minRating`. Each spec entry is exactly
+  `TierListSpec`, so one front-end component draws both; `averageRating` holds the average
+  score.
+- **Cost.** ~150 ms uncached on `world` (95,885 covered characters grouped), ~45 ms for a
+  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:<region>:<season>`.
+- **Real data (MN 2, world).** S tier: Arms, Subtlety, Holy Paladin, Elemental, Blood DK,
+  the dominant composition. D: Destruction Warlock, Fire Mage.
+
 ### PvE Mythic+ seasons
 
 `GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its

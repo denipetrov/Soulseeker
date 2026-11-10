@@ -90,6 +90,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row&page=1` | token | The Mythic+ run board, paged; past seasons from the archive |
 | `GET /pve/mplus-compositions?region=world&season=current&dungeon=murder-row&top=1000` | token | The 50 most played party compositions among a board's best runs |
 | `GET /pve/spec-representation?region=world&dungeonSlug=all&season=current&getSeasons=true` | token | Which specs a Mythic+ season's best runs were played with, per region and dungeon |
+| `GET /pve/tier-list?region=world` | token | Each Mythic+ spec of the current season scored 0–100 and ranked S to D, as the PvP tier list |
 | `GET /pve/mplus-seasons` | token | Every Mythic+ season with its dungeons and cutoffs, and every affix |
 | `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane&page=1` | token | The Mythic+ character leaderboard, paged; past seasons from the archive |
 | `GET /pve/raid?raidSlug=the-venomous-abyss&region=world&difficulty=mythic` | token | One raid and its top hundred guilds for a region and difficulty, with every boss pulled and killed |
