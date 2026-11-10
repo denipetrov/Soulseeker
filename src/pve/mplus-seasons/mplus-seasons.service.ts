@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { Env } from '../../config/env.schema.js';
@@ -99,6 +99,22 @@ export class MplusSeasonsService {
     );
 
     return response!;
+  }
+
+  /**
+   * A dungeon of a season, by slug, or a 404: the check every board filtered
+   * to one dungeon makes, so a dungeon the season does not run is refused alike.
+   */
+  async dungeon(season: string, slug: string): Promise<MplusDungeon> {
+    const { seasons } = await this.seasons();
+    const dungeon = seasons
+      .find((entry) => entry.slug === season)
+      ?.dungeons.find((entry) => entry.slug === slug);
+    if (!dungeon) {
+      throw new NotFoundException({ message: `No dungeon ${slug} in ${season}` });
+    }
+
+    return dungeon;
   }
 
   private async load(): Promise<MplusSeasonsResponse> {

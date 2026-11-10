@@ -92,3 +92,15 @@ export const SPEC_IDS: Record<string, number> = {
   'warrior-fury': 72,
   'warrior-protection': 73,
 };
+
+const CLASS_SLUGS = new Map(Object.entries(CLASS_IDS).map(([slug, id]) => [id, slug]));
+const SPEC_SLUGS = new Map(
+  Object.entries(SPEC_IDS).map(([pair, id]) => [id, pair.slice(pair.indexOf('-') + 1)]),
+);
+
+/** The class slug of a Blizzard class id: `6` → `deathknight`; null for an id not listed. */
+export const classSlugOf = (classId: number): string | null => CLASS_SLUGS.get(classId) ?? null;
+
+/** The spec slug of a Blizzard specialization id: `253` → `beastmastery`; null if unknown. */
+export const specSlugOf = (specId: number | null): string | null =>
+  specId === null ? null : (SPEC_SLUGS.get(specId) ?? null);

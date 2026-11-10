@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Collection, Filter } from 'mongodb';
 
@@ -91,7 +91,7 @@ export class MplusRunsService {
    */
   async board(region: string, seasonParam: string, dungeon: string | null): Promise<MplusRunBoard> {
     const { slug: season, live } = await this.seasons.resolve(region, seasonParam);
-    const dungeonId = dungeon ? await this.dungeonId(season, dungeon) : null;
+    const dungeonId = dungeon ? (await this.seasonList.dungeon(season, dungeon)).id : null;
 
     return {
       season,
@@ -138,19 +138,6 @@ export class MplusRunsService {
       ),
       runs: runs!,
     };
-  }
-
-  /** The id of a dungeon the season runs, by slug. */
-  private async dungeonId(season: string, slug: string): Promise<number> {
-    const { seasons } = await this.seasonList.seasons();
-    const dungeon = seasons
-      .find((entry) => entry.slug === season)
-      ?.dungeons.find((entry) => entry.slug === slug);
-    if (!dungeon) {
-      throw new NotFoundException({ message: `No dungeon ${slug} in ${season}` });
-    }
-
-    return dungeon.id;
   }
 
   private filter(

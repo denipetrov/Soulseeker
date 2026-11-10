@@ -1,4 +1,4 @@
-import { CLASS_IDS, SPEC_IDS } from '../../pvp/specs.js';
+import { classSlugOf, specSlugOf } from '../../pvp/specs.js';
 import type { MplusRunMember } from '../mplus-runs/mplus-runs.types.js';
 import type { Composition, CompositionMember } from './mplus-compositions.types.js';
 
@@ -13,19 +13,14 @@ export type RosterSlot = Pick<
 
 const ROLE_ORDER: Record<string, number> = { tank: 0, healer: 1, dps: 2 };
 
-const CLASS_SLUGS = new Map(Object.entries(CLASS_IDS).map(([slug, id]) => [id, slug]));
-const SPEC_SLUGS = new Map(
-  Object.entries(SPEC_IDS).map(([pair, id]) => [id, pair.slice(pair.indexOf('-') + 1)]),
-);
-
 const byRoleThenId = (a: RosterSlot, b: RosterSlot) =>
   (ROLE_ORDER[a.role] ?? 3) - (ROLE_ORDER[b.role] ?? 3) ||
   a.classId - b.classId ||
   (a.specId ?? 0) - (b.specId ?? 0);
 
 const memberOf = (slot: RosterSlot): CompositionMember => ({
-  class: CLASS_SLUGS.get(slot.classId) ?? null,
-  spec: slot.specId === null ? null : (SPEC_SLUGS.get(slot.specId) ?? null),
+  class: classSlugOf(slot.classId),
+  spec: specSlugOf(slot.specId),
   classId: slot.classId,
   className: slot.className,
   specId: slot.specId ?? null,

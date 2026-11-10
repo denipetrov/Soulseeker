@@ -747,6 +747,38 @@ party compositions among a board's best runs.
 - **Real data** (MN 2, world, top 1000): one party finished 52.6% of the runs (Blood DK,
   Holy Paladin, Arms, Subtlety, Elemental). The top 50 cover 96.5% of the runs.
 
+### PvE spec representation
+
+`GET /pve/spec-representation` (`src/pve/spec-representation/`) returns which specs a
+Mythic+ season's best runs were played with, from Rankwarden's `mplus_spec_representation`.
+
+- **Season-based, not dated.** Rankwarden keeps one document per season, region and
+  dungeon. It recomputes the live season after every pass, overwriting it, and writes a
+  finished season once from the archive. So where `/pvp/spec-representation` takes `date`
+  and `getEarliestDate`, this takes:
+  - `season`: `current` (default) or a slug, resolved by `MplusSeasonResolver`;
+  - `getSeasons=true`: the seasons with a snapshot for that region and dungeon, newest
+    first, for a season picker.
+  - A dated history would need Rankwarden to write daily snapshots, as it does for PvP. If
+    it ever does, `date` can be added without breaking this.
+- **Other parameters.** `region`: `world` (default; Rankwarden's `region: 'all'`) or `us`,
+  `eu`, `kr`, `tw`, `cn`. `dungeonSlug`: `all` (default; `dungeonId: null`) or a dungeon
+  of the season, checked by `MplusSeasonsService.dungeon()`, which the run boards use too.
+- **Read.** One `findOne` by `mplus_representation_key` (season, region, dungeonId).
+  `getSeasons` adds a `distinct` over the 162 documents. Not cached, like the PvP
+  snapshot: ~25 ms.
+- **Shape.**
+  - `{ region, season, dungeon, source, computedAt, runs, slots, classified, roles, specs,
+    seasons? }`. `source` is `live` (still moving) or `archive` (final).
+  - Counted by roster slot, so a player in forty runs counts forty times, over the top of
+    each region's board.
+  - Each spec as stored: `classId`, `className`, `specId`, `specName`, `role`, `count`,
+    `percent` (of classified slots) and `rolePercent` (of its role's slots, the figure to
+    compare by), both **0–100**, unlike the PvP `share` (0–1). The `class` and `spec`
+    slugs come from `classSlugOf` / `specSlugOf` in `src/pvp/specs.ts`. Most played first.
+- **404** for a missing snapshot (`kr` before Rankwarden counts it, `season-tww-1`), a
+  season the catalogue does not know, or a dungeon the season does not run.
+
 ### PvE Mythic+ seasons
 
 `GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its
