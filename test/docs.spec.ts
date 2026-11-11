@@ -57,7 +57,7 @@ describe('API docs (outside production)', () => {
     const params = Object.fromEntries(leaderboard.parameters.map((p: Json) => [p.name, p]));
     expect(params.region).toMatchObject({
       required: true,
-      schema: { enum: ['us', 'eu', 'kr', 'tw'] },
+      schema: { enum: ['world', 'us', 'eu', 'kr', 'tw'] },
     });
     expect(params.pageSize).toMatchObject({
       required: false,

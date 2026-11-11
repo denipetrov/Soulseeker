@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import type { Filter } from 'mongodb';
 
 import type { ArchiveEntry, RatingRow } from '../../characters/entities/character.entity.js';
+import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { Env } from '../../config/env.schema.js';
 import { Collections, type ReadCollection } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
+import { regionsOf, WORLD, type PvpBoard } from '../world.js';
 import {
   CORE_BRACKETS,
   type CoreBracket,
@@ -31,6 +33,8 @@ const RATING_COLLECTIONS: Record<LeaderboardBracket, ReadCollection> = {
 
 const ARCHIVE_PROJECTION = {
   _id: 0,
+  // Each row's own region: on `world`, which region's cutoff it is judged by.
+  region: 1,
   characterId: 1,
   characterName: 1,
   realmSlug: 1,
@@ -60,6 +64,11 @@ const isCore = (bracket: LeaderboardBracket): bracket is CoreBracket =>
  *   no class or spec, and Shuffle and Blitz — archived per spec only — must
  *   name both, which picks that spec's ladder.
  *
+ * On `world` the same season is read across every region (`region: $in`),
+ * which the indexes — season, then region — merge in rating order. Each row is
+ * enriched from, and measured against the cutoff of, its own region; the
+ * board's `cutoff` is then null and `regionCutoffs` gives each region's.
+ *
  * Paged with skip and limit. That reads index keys only — 100,000 deep costs
  * ~40 ms on the largest board — and gives the front end page numbers. Whole
  * pages are cached in Redis for `LEADERBOARD_CACHE_TTL_SECONDS`: Rankwarden
@@ -80,14 +89,15 @@ export class LeaderboardService {
   }
 
   async leaderboard(query: LeaderboardQuery): Promise<LeaderboardResponse> {
-    const season = await this.seasons.season(query.region, query.seasonId);
-    if (!season) {
+    const seasons = await this.boardSeasons(query.region, query.seasonId);
+    if (seasons.length === 0) {
       throw new NotFoundException({
         message: `No PvP season ${query.seasonId} in ${query.region}`,
       });
     }
 
-    if (!season.current) this.assertArchivedFilters(query);
+    const current = seasons[0]!.current;
+    if (!current) this.assertArchivedFilters(query);
 
     const key = [
       'pvp:board',
@@ -102,11 +112,26 @@ export class LeaderboardService {
 
     const page = await this.cache.getOrLoad(
       key,
-      () => (season.current ? this.currentBoard(query, season) : this.archivedBoard(query, season)),
+      () => (current ? this.currentBoard(query, seasons) : this.archivedBoard(query, seasons)),
       this.cacheTtlSeconds,
     );
 
     return page!;
+  }
+
+  /**
+   * The season in each region the board covers, all live or all archived. On
+   * `world` a region without the season is left out, and at a rollover — the
+   * season live in one region and archived in another — the live regions are
+   * the board, as their ladders are the ones still moving.
+   */
+  private async boardSeasons(board: PvpBoard, seasonId: number): Promise<PvpSeason[]> {
+    const found = (
+      await Promise.all(regionsOf(board).map((region) => this.seasons.season(region, seasonId)))
+    ).filter((season): season is PvpSeason => season !== null);
+    const live = found.filter((season) => season.current);
+
+    return live.length > 0 ? live : found;
   }
 
   private assertArchivedFilters({ bracket, class: cls, spec }: LeaderboardQuery): void {
@@ -125,10 +150,11 @@ export class LeaderboardService {
 
   private async currentBoard(
     query: LeaderboardQuery,
-    season: PvpSeason,
+    seasons: PvpSeason[],
   ): Promise<LeaderboardResponse> {
-    const { region, seasonId } = query;
-    const filter: Filter<RatingRow> = { seasonId, region };
+    // On `world`, `$in` the regions: each index leads with season then region,
+    // so the regions' ranges merge in rating order rather than being sorted.
+    const filter: Filter<RatingRow> = { seasonId: query.seasonId, region: inRegions(seasons) };
     if (query.class) filter.class = query.class;
     if (query.spec) filter.spec = query.spec;
 
@@ -143,17 +169,17 @@ export class LeaderboardService {
       ratings.countDocuments(filter),
     ]);
 
-    return this.response(query, season, total, await this.enricher.entries(rows, season));
+    return this.response(query, seasons, total, await this.enricher.entriesAcross(rows, seasons));
   }
 
   private async archivedBoard(
     query: LeaderboardQuery,
-    season: PvpSeason,
+    seasons: PvpSeason[],
   ): Promise<LeaderboardResponse> {
-    const { region, seasonId, bracket, class: cls, spec } = query;
+    const { seasonId, bracket, class: cls, spec } = query;
     // `assertArchivedFilters` has made sure a spec family names both.
     const ladder = isCore(bracket) ? bracket : `${bracket}-${cls}-${spec}`;
-    const filter: Filter<ArchiveEntry> = { seasonId, region, bracket: ladder };
+    const filter: Filter<ArchiveEntry> = { seasonId, region: inRegions(seasons), bracket: ladder };
 
     // `archive_board` (seasonId, region, bracket, rating desc) serves both.
     const archive = this.mongo.collection<ArchiveEntry>(Collections.ArchiveEntries);
@@ -166,36 +192,52 @@ export class LeaderboardService {
         .toArray(),
       archive.countDocuments(filter),
     ]);
+    const seasonOf = new Map(seasons.map((season) => [season.region, season]));
 
     return this.response(
       query,
-      season,
+      seasons,
       total,
-      rows.map((row) => archivedEntry(row, season)),
+      rows.map((row) => archivedEntry(row, seasonOf.get(row.region) ?? null)),
     );
   }
 
   private response(
     query: LeaderboardQuery,
-    season: PvpSeason,
+    seasons: PvpSeason[],
     total: number,
     entries: LeaderboardResponse['entries'],
   ): LeaderboardResponse {
-    return {
+    const response: LeaderboardResponse = {
       region: query.region,
       seasonId: query.seasonId,
       bracket: query.bracket,
       class: query.class,
       spec: query.spec,
-      current: season.current,
+      current: seasons[0]!.current,
       page: query.page,
       pageSize: query.pageSize,
       total,
       totalPages: Math.ceil(total / query.pageSize),
-      cutoff: boardCutoff(query, season),
+      // One region's; on `world` there is none, as each region sets its own.
+      cutoff: query.region === WORLD ? null : boardCutoff(query, seasons[0]!),
       entries,
     };
+    if (query.region === WORLD) {
+      response.regionCutoffs = Object.fromEntries(
+        seasons.map((season) => [season.region, boardCutoff(query, season)]),
+      );
+    }
+
+    return response;
   }
+}
+
+/** One region as an equality; several as `$in`, which the board indexes merge in order. */
+function inRegions(seasons: readonly PvpSeason[]): Region | { $in: Region[] } {
+  return seasons.length === 1
+    ? seasons[0]!.region
+    : { $in: seasons.map((season) => season.region) };
 }
 
 /**

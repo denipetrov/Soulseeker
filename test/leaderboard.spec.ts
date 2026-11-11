@@ -220,6 +220,7 @@ describe('GET /pvp/leaderboard — current season', () => {
     expect(body.cutoff).toMatchObject({ rating: 2500 });
     expect(body.entries.map((e: Json) => e.characterId)).toEqual([1, 2, 3]);
     expect(body.entries[0]).toEqual({
+      region: 'eu',
       characterId: 1,
       characterName: 'Biba',
       realmSlug: 'kazzak',
@@ -300,6 +301,7 @@ describe('GET /pvp/leaderboard — archived season', () => {
 
     expect(body).toMatchObject({ current: false, total: 2 });
     expect(body.entries[0]).toEqual({
+      region: 'eu',
       characterId: 11,
       characterName: 'Old11',
       realmSlug: 'kazzak',

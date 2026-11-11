@@ -1,5 +1,6 @@
 import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { Cutoff } from '../seasons/pvp-season.types.js';
+import type { PvpBoard } from '../world.js';
 import type { LeaderboardBracket } from './dto/leaderboard-query.dto.js';
 
 /**
@@ -11,6 +12,8 @@ import type { LeaderboardBracket } from './dto/leaderboard-query.dto.js';
  * from archived rows rather than null.
  */
 export interface LeaderboardEntry {
+  /** The character's region: on a `world` board, what tells two realms of one name apart. */
+  region: Region;
   characterId: number;
   characterName: string | null;
   realmSlug: string | null;
@@ -24,7 +27,10 @@ export interface LeaderboardEntry {
   lost: number | null;
   /** Lowercase: `alliance` or `horde`. */
   faction: string | null;
-  /** The rating reaches the season's title cutoff for this ladder (and faction, where split). */
+  /**
+   * The rating reaches the season's title cutoff for this ladder (and faction,
+   * where split) in the character's own region.
+   */
   inTitleRange: boolean;
 
   /**
@@ -44,7 +50,8 @@ export interface LeaderboardEntry {
 }
 
 export interface LeaderboardResponse {
-  region: Region;
+  /** A region, or `world`: every region together. */
+  region: PvpBoard;
   seasonId: number;
   bracket: LeaderboardBracket;
   class: string | null;
@@ -63,5 +70,10 @@ export interface LeaderboardResponse {
    * and for a season with no rewards recorded.
    */
   cutoff: Cutoff | null;
+  /**
+   * `world` only: each region's cutoff for the board, which `cutoff` cannot be
+   * — Blizzard sets them per region. Each entry's `inTitleRange` uses its own.
+   */
+  regionCutoffs?: Partial<Record<Region, Cutoff | null>>;
   entries: LeaderboardEntry[];
 }

@@ -1,6 +1,7 @@
 import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { LeaderboardEntry } from '../leaderboard/leaderboard.types.js';
 import type { Cutoff } from '../seasons/pvp-season.types.js';
+import type { PvpBoard } from '../world.js';
 import type { CutoffBracket } from './dto/cutoffs-query.dto.js';
 
 /**
@@ -16,8 +17,10 @@ export interface SpecCutoffCount {
   class: string | null;
   spec: string | null;
   count: number;
-  /** Shuffle and Blitz only: this spec's own cutoff. */
+  /** Shuffle and Blitz only, one region: this spec's own cutoff. */
   cutoff?: SpecLadderCutoff;
+  /** Shuffle and Blitz only, `world`: this spec's cutoff in each region counted. */
+  regionCutoffs?: Partial<Record<Region, SpecLadderCutoff>>;
 }
 
 export interface SpecLadderCutoff extends Cutoff {
@@ -26,7 +29,8 @@ export interface SpecLadderCutoff extends Cutoff {
 }
 
 export interface CutoffsResponse {
-  region: Region;
+  /** A region, or `world`: every region together, each counted against its own cutoffs. */
+  region: PvpBoard;
   bracket: CutoffBracket;
   seasonId: number;
   /** As Blizzard names it: `Player vs. Player (Midnight Season 2)`. */
@@ -36,10 +40,15 @@ export interface CutoffsResponse {
    * Blizzard; false until they are the final, archived ones.
    */
   final: boolean;
-  /** When Rankwarden last read the cutoffs from Blizzard. */
+  /** When Rankwarden last read the cutoffs from Blizzard; on `world`, the oldest region's read. */
   rewardsFetchedAt: string | null;
-  /** 3v3 and RBG: the one cutoff, with its title. Null on Shuffle and Blitz, which have one per spec. */
+  /**
+   * 3v3 and RBG: the one cutoff, with its title. Null on Shuffle and Blitz,
+   * which have one per spec, and on `world`, which has one per region.
+   */
   cutoff: Cutoff | null;
+  /** 3v3 and RBG on `world`: each region's cutoff. */
+  regionCutoffs?: Partial<Record<Region, Cutoff | null>>;
   /** Characters at or above the cutoff, across every spec. */
   total: number;
   /** Most characters first. */
@@ -52,7 +61,8 @@ export interface CutoffsResponse {
  * the top fraction of a percent of a ladder, a few dozen characters a spec.
  */
 export interface CutoffCharactersResponse {
-  region: Region;
+  /** A region, or `world`: every region's qualifying characters, by rating. */
+  region: PvpBoard;
   bracket: CutoffBracket;
   class: string;
   spec: string;
@@ -60,8 +70,13 @@ export interface CutoffCharactersResponse {
   seasonName: string | null;
   final: boolean;
   rewardsFetchedAt: string | null;
-  /** The cutoff counted against: the spec's own on Shuffle and Blitz, the season's on 3v3 and RBG. */
-  cutoff: Cutoff | SpecLadderCutoff;
+  /**
+   * The cutoff counted against: the spec's own on Shuffle and Blitz, the
+   * season's on 3v3 and RBG. Null on `world`, where each region has its own.
+   */
+  cutoff: Cutoff | SpecLadderCutoff | null;
+  /** `world` only: the cutoff each region's characters were counted against. */
+  regionCutoffs?: Partial<Record<Region, Cutoff | SpecLadderCutoff>>;
   /** How many characters `characters` holds. */
   total: number;
   characters: LeaderboardEntry[];

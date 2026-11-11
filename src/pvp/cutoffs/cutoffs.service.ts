@@ -3,14 +3,20 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RatingRow } from '../../characters/entities/character.entity.js';
 import { Collections, type ReadCollection } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
-import { BoardEnricher, ROW_PROJECTION } from '../leaderboard/board-enricher.service.js';
+import {
+  BoardEnricher,
+  ROW_PROJECTION,
+  type BoardRow,
+} from '../leaderboard/board-enricher.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import type { Cutoff, PvpSeason, SpecFamily } from '../seasons/pvp-season.types.js';
+import { regionsOf, WORLD, type PvpBoard } from '../world.js';
 import type { CutoffBracket, CutoffsQuery } from './dto/cutoffs-query.dto.js';
 import type {
   CutoffCharactersResponse,
   CutoffsResponse,
   SpecCutoffCount,
+  SpecLadderCutoff,
 } from './cutoffs.types.js';
 
 const RATING_COLLECTIONS: Record<CutoffBracket, ReadCollection> = {
@@ -37,6 +43,12 @@ function ratingOf(cutoff: Cutoff): number | null {
   return sides.length > 0 ? Math.min(...sides) : null;
 }
 
+/** One region's counts, with the season they were read for. */
+interface RegionCounts {
+  season: PvpSeason;
+  specs: SpecCutoffCount[];
+}
+
 /**
  * The current season's title cutoffs for one ladder family, and how many
  * characters of each spec are at or above them.
@@ -53,6 +65,11 @@ function ratingOf(cutoff: Cutoff): number | null {
  *   through `spec_board` (season, region, class, spec, rating), run together.
  * - **With `class` and `spec`**: instead of counts, that spec's qualifying
  *   characters, enriched exactly as the leaderboard's entries are.
+ * - **`world`**: Blizzard sets cutoffs per region, so there is no world
+ *   cutoff. Each region is counted against its own, and the counts summed;
+ *   the characters are every region's, by rating. `cutoff` is then null and
+ *   `regionCutoffs` gives each region's. A region without cutoffs yet is left
+ *   out; only when none has them is it a 404.
  */
 @Injectable()
 export class CutoffsService {
@@ -63,38 +80,66 @@ export class CutoffsService {
   ) {}
 
   async cutoffs(query: CutoffsQuery): Promise<CutoffsResponse | CutoffCharactersResponse> {
-    const season = await this.seasons.currentSeason(query.region);
-    if (!season) {
+    const seasons = await this.currentSeasons(query.region);
+
+    if (query.class && query.spec) return this.characters(query, seasons, query.class, query.spec);
+
+    const counted = (
+      await Promise.all(
+        seasons.map(async (season) => ({
+          season,
+          specs: isSpecFamily(query.bracket)
+            ? await this.perSpecLadder(season, query.bracket)
+            : await this.perSpec(season, query.bracket),
+        })),
+      )
+    ).filter((entry): entry is RegionCounts => entry.specs !== null);
+
+    if (counted.length === 0) {
       throw new NotFoundException({
-        message: `No current PvP season recorded for ${query.region}`,
+        message: `No ${query.bracket} title cutoffs recorded yet for season ${seasons[0]!.seasonId} in ${query.region}`,
       });
     }
 
-    if (query.class && query.spec) return this.characters(query, season, query.class, query.spec);
-
-    const specs = isSpecFamily(query.bracket)
-      ? await this.perSpecLadder(season, query.bracket)
-      : await this.perSpec(season, query.bracket);
-
-    if (!specs) {
-      throw new NotFoundException({
-        message: `No ${query.bracket} title cutoffs recorded yet for season ${season.seasonId} in ${query.region}`,
-      });
-    }
-
+    const world = query.region === WORLD;
+    const specs = world ? mergedCounts(counted) : counted[0]!.specs;
     specs.sort((a, b) => b.count - a.count);
 
-    return {
+    const used = counted.map((entry) => entry.season);
+    const response: CutoffsResponse = {
       region: query.region,
       bracket: query.bracket,
-      seasonId: season.seasonId,
-      seasonName: season.name,
-      final: season.final,
-      rewardsFetchedAt: season.rewardsFetchedAt,
-      cutoff: isSpecFamily(query.bracket) ? null : season.cutoffs[query.bracket],
+      ...seasonFieldsOf(used),
+      cutoff: world || isSpecFamily(query.bracket) ? null : used[0]!.cutoffs[query.bracket],
       total: specs.reduce((sum, entry) => sum + entry.count, 0),
       specs,
     };
+    if (world && !isSpecFamily(query.bracket)) {
+      const bracket = query.bracket;
+      response.regionCutoffs = Object.fromEntries(
+        used.map((season) => [season.region, season.cutoffs[bracket]]),
+      );
+    }
+
+    return response;
+  }
+
+  /**
+   * The current season of each region the board covers. On `world`, the
+   * regions on the newest season: at a rollover the others' cutoffs belong to
+   * another season. A 404 when no region has one.
+   */
+  private async currentSeasons(board: PvpBoard): Promise<PvpSeason[]> {
+    const found = (
+      await Promise.all(regionsOf(board).map((region) => this.seasons.currentSeason(region)))
+    ).filter((season): season is PvpSeason => season !== null);
+    if (found.length === 0) {
+      throw new NotFoundException({ message: `No current PvP season recorded for ${board}` });
+    }
+
+    const newest = Math.max(...found.map((season) => season.seasonId));
+
+    return found.filter((season) => season.seasonId === newest);
   }
 
   /**
@@ -102,17 +147,62 @@ export class CutoffsService {
    * leaderboard shows them. On Shuffle and Blitz the spec's own ladder and
    * cutoff; on 3v3 and RBG the season's cutoff and the characters whose active
    * spec it is — only those Rankwarden has enriched, as only they have one.
-   * Read through `spec_board`, the same range the count is.
+   * Read through `spec_board`, the same range the count is; on `world` once
+   * per region, each against its own cutoff, merged by rating.
    */
   private async characters(
     query: CutoffsQuery,
-    season: PvpSeason,
+    seasons: PvpSeason[],
     cls: string,
     spec: string,
   ): Promise<CutoffCharactersResponse> {
-    const cutoff = isSpecFamily(query.bracket)
-      ? season.specCutoffs[query.bracket][`${cls}-${spec}`]
-      : season.cutoffs[query.bracket];
+    const found = (
+      await Promise.all(seasons.map((season) => this.qualifying(query.bracket, season, cls, spec)))
+    ).filter((entry) => entry !== null);
+
+    if (found.length === 0) {
+      throw new NotFoundException({
+        message: `No ${query.bracket} title cutoff recorded for ${cls} ${spec} in season ${seasons[0]!.seasonId} in ${query.region}`,
+      });
+    }
+
+    const used = found.map((entry) => entry.season);
+    const rows = found.flatMap((entry) => entry.rows).sort((a, b) => b.rating - a.rating);
+    const characters = await this.enricher.entriesAcross(rows, used);
+    const world = query.region === WORLD;
+
+    const response: CutoffCharactersResponse = {
+      region: query.region,
+      bracket: query.bracket,
+      class: cls,
+      spec,
+      ...seasonFieldsOf(used),
+      cutoff: world ? null : found[0]!.cutoff,
+      total: characters.length,
+      characters,
+    };
+    if (world) {
+      response.regionCutoffs = Object.fromEntries(
+        found.map((entry) => [entry.season.region, entry.cutoff]),
+      );
+    }
+
+    return response;
+  }
+
+  /**
+   * One region's qualifying rows of a spec, with the cutoff they qualify by.
+   * Null when the region has no cutoff for it, or the season no such spec.
+   */
+  private async qualifying(
+    bracket: CutoffBracket,
+    season: PvpSeason,
+    cls: string,
+    spec: string,
+  ): Promise<{ season: PvpSeason; cutoff: Cutoff | SpecLadderCutoff; rows: BoardRow[] } | null> {
+    const cutoff = isSpecFamily(bracket)
+      ? season.specCutoffs[bracket][`${cls}-${spec}`]
+      : season.cutoffs[bracket];
     const rating = cutoff ? ratingOf(cutoff) : null;
 
     // On 3v3 and RBG any slug would do, answering an empty list for `mage-holy`.
@@ -125,14 +215,10 @@ export class CutoffsService {
     ];
     const unknownSpec = knownSpecs.length > 0 && !knownSpecs.includes(`${cls}-${spec}`);
 
-    if (!cutoff || rating === null || unknownSpec) {
-      throw new NotFoundException({
-        message: `No ${query.bracket} title cutoff recorded for ${cls} ${spec} in season ${season.seasonId} in ${query.region}`,
-      });
-    }
+    if (!cutoff || rating === null || unknownSpec) return null;
 
     const rows = await this.mongo
-      .collection<RatingRow>(RATING_COLLECTIONS[query.bracket])
+      .collection<RatingRow>(RATING_COLLECTIONS[bracket])
       .find(
         {
           seasonId: season.seasonId,
@@ -146,21 +232,7 @@ export class CutoffsService {
       .sort({ rating: -1 })
       .toArray();
 
-    const characters = await this.enricher.entries(rows, season);
-
-    return {
-      region: query.region,
-      bracket: query.bracket,
-      class: cls,
-      spec,
-      seasonId: season.seasonId,
-      seasonName: season.name,
-      final: season.final,
-      rewardsFetchedAt: season.rewardsFetchedAt,
-      cutoff,
-      total: characters.length,
-      characters,
-    };
+    return { season, cutoff, rows };
   }
 
   /** 3v3 and RBG: the qualifying rows, grouped by spec. Null when there is no cutoff. */
@@ -225,4 +297,43 @@ export class CutoffsService {
 
     return counted;
   }
+}
+
+/**
+ * Several regions' counts as one: summed per spec, each spec's own cutoff
+ * (Shuffle and Blitz) kept per region in `regionCutoffs`.
+ */
+function mergedCounts(counted: readonly RegionCounts[]): SpecCutoffCount[] {
+  const merged = new Map<string, SpecCutoffCount>();
+
+  for (const { season, specs } of counted) {
+    for (const { cutoff, ...entry } of specs) {
+      const key = `${entry.class}|${entry.spec}`;
+      const into = merged.get(key) ?? { class: entry.class, spec: entry.spec, count: 0 };
+      into.count += entry.count;
+      if (cutoff) into.regionCutoffs = { ...into.regionCutoffs, [season.region]: cutoff };
+      merged.set(key, into);
+    }
+  }
+
+  return [...merged.values()];
+}
+
+/**
+ * The season fields of an answer read across some regions: the season's id and
+ * name (one season everywhere), final only once every region's is, and the
+ * oldest read of the cutoffs — the answer is as fresh as its stalest region.
+ */
+function seasonFieldsOf(seasons: readonly PvpSeason[]) {
+  const fetched = seasons
+    .map((season) => season.rewardsFetchedAt)
+    .filter((at): at is string => at !== null)
+    .sort();
+
+  return {
+    seasonId: seasons[0]!.seasonId,
+    seasonName: seasons[0]!.name,
+    final: seasons.every((season) => season.final),
+    rewardsFetchedAt: fetched[0] ?? null,
+  };
 }

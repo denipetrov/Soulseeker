@@ -36,6 +36,7 @@ const HISTORY_EXAMPLE: RepresentationHistoryResponse = {
   days: [
     {
       date: '2026-10-14',
+      regions: ['us'],
       computedAt: '2026-10-14T10:35:16.180Z',
       total: 9816,
       classified: 9816,
@@ -55,6 +56,7 @@ const HISTORY_EXAMPLE: RepresentationHistoryResponse = {
     },
     {
       date: '2026-10-20',
+      regions: ['us'],
       computedAt: '2026-10-20T08:41:40.203Z',
       total: 10852,
       classified: 10852,
@@ -79,6 +81,7 @@ const EXAMPLE: RepresentationResponse = {
   region: 'us',
   bracket: '3v3',
   rating: 2100,
+  regions: ['us'],
   date: '2026-10-20',
   computedAt: '2026-10-20T08:41:40.203Z',
   total: 4209,

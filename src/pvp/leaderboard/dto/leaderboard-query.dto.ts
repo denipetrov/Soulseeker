@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { REGIONS } from '../../../blizzard/blizzard.constants.js';
 import { CORE_BRACKETS, SPEC_FAMILIES } from '../../seasons/pvp-season.types.js';
+import { pvpBoardSchema } from '../../world.js';
 
 /** Class slugs as Rankwarden stores them on the ratings rows and in ladder names. */
 export const CLASSES = [
@@ -45,12 +45,7 @@ const slug = z
  */
 export const leaderboardQuerySchema = z
   .object({
-    region: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .pipe(z.enum(REGIONS))
-      .meta({ description: 'Blizzard region.', enum: [...REGIONS], example: 'eu' }),
+    region: pvpBoardSchema,
     seasonId: z.coerce.number().int().positive().meta({
       description: 'Blizzard PvP season id. The live one reads current ratings.',
       example: 42,

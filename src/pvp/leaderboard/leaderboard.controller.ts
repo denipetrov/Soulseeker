@@ -36,6 +36,7 @@ const EXAMPLE: LeaderboardResponse = {
   },
   entries: [
     {
+      region: 'us',
       characterId: 241802571,
       characterName: 'Noobwar',
       realmSlug: 'burning-blade',

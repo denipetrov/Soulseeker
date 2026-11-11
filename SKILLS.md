@@ -239,6 +239,52 @@ detail and the cutoff of the ladder it shows.
     `specCutoffs`.
   - **Live cutoffs move** until the season ends; `final: false` marks them.
 
+### PvP `world`
+
+Every PvP endpoint that takes `region` (the leaderboard, title cutoffs, spec
+representation with its history, and the tier list) also takes `region=world`: every
+region together, as the Mythic+ and raid endpoints already do. The schema is
+`pvpBoardSchema` (`src/pvp/world.ts`). `region` stays required, and `regionsOf(board)` lists
+the regions a board covers. The character page is one character, so it has none.
+
+- **One season everywhere.** Blizzard's PvP season ids are global (42 in every region), so
+  a world board is the same season across regions: `region: { $in: [...] }` on Rankwarden's
+  indexes, which lead with season then region. MongoDB merges the regions' ranges in rating
+  order, with no in-memory sort.
+- **Leaderboard.** The season is looked up per region, and a region without it is left out.
+  At a rollover (live in one region, archived in another) the live regions form the board.
+  - Rows are enriched per region (`BoardEnricher.entriesAcross`): character ids are unique
+    only within a region.
+  - Every entry now carries `region`, on single-region boards too. `inTitleRange` uses the
+    entry's own region's cutoff.
+  - The board's `cutoff` is null on `world`, and `regionCutoffs` gives each region's.
+  - Archived rows are projected with their `region` for the same reason. Without it, a
+    world archive judged no row in range.
+- **Cutoffs.** Blizzard sets them per region (3v3: US 2954, EU 2982), so there is no world
+  cutoff. Each region is counted against its own and the counts summed: Shuffle total
+  1,196 = 464 + 458 + 151 + 123.
+  - `cutoff` is null, and `regionCutoffs` (3v3/RBG) or each spec's `regionCutoffs`
+    (Shuffle/Blitz) give each region's.
+  - The class + spec list merges every region's qualifying characters by rating.
+  - `final` means final in every region. `rewardsFetchedAt` is the oldest region's read.
+  - A region without cutoffs yet is left out; only none at all is a 404. The regions used
+    are those on the newest season.
+- **Spec representation.** Rankwarden writes snapshots per region only, so a world day is
+  that day's regional snapshots added up (`combineSnapshots`, `representation/combine.ts`,
+  unit-tested).
+  - `total`, `classified`, each spec's `count` and `heroTalentsClassified`, and each hero
+    talent tree's `count` are summed, and the shares are worked out again from the sums,
+    never averaged. Real data: 32,863 = 14,440 + 17,686 + 441 + 296, and the shares sum
+    to 1.
+  - Per region, a rollover day keeps the newer season. `computedAt` is the latest region's.
+  - `regions` (now on every answer, and on each history day) lists the regions in it.
+  - `latest` is the newest day any region has, combining the regions that have it.
+    `earliestDate` is the first day any region has classified specs.
+- **Tier list.** Both reads run across every region on the current season: the top 5,000
+  of all of them merged by rating, and every row at or above 1500. ~175 ms uncached for
+  world Shuffle.
+- Tests: `test/pvp-world.spec.ts`, with EU and US fixtures sharing a character id.
+
 ### PvP leaderboard
 
 `GET /pvp/leaderboard?region=&seasonId=&bracket=[&class=&spec=][&page=&pageSize=]`
