@@ -290,6 +290,7 @@ export const envSchema = z.object({
   RAIDERIO_PATH_GUILD_PROFILE: pathTemplate('guilds/profile'),
   RAIDERIO_PATH_GUILD_BOSS_KILL: pathTemplate('guilds/boss-kill'),
   RAIDERIO_PATH_MPLUS_RUN_DETAILS: pathTemplate('mythic-plus/run-details'),
+  RAIDERIO_PATH_MPLUS_CUTOFF_ANALYSIS: pathTemplate('mythic-plus/cutoff-analysis/summary'),
   RAIDERIO_REQUEST_TIMEOUT_MS: positiveInt(10_000),
   RAIDERIO_RETRY_LIMIT: nonNegativeInt(1),
   RAIDERIO_MINUTE_LIMIT: positiveInt(1_000),
@@ -411,6 +412,8 @@ export const envSchema = z.object({
   MPLUS_RUNS_CACHE_TTL_SECONDS: positiveInt(300),
   /** How long one run's details from Raider.io are reused: a finished run does not change. */
   MPLUS_RUN_CACHE_TTL_SECONDS: positiveInt(86_400),
+  /** How long one season and region's cutoff analysis from Raider.io is reused. */
+  MPLUS_CUTOFFS_CACHE_TTL_SECONDS: positiveInt(3_600),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
   /** How long an expired guild part is kept past its TTL, to be served stale. */

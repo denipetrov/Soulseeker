@@ -3,10 +3,10 @@ import { Module } from '@nestjs/common';
 import { RaiderIoCharacterApi } from './character.api.js';
 import { RaiderIoGuildApi } from './guild.api.js';
 import { RaiderIoHttpService } from './http/raiderio-http.service.js';
-import { RaiderIoRunApi } from './run.api.js';
+import { RaiderIoMythicPlusApi } from './mythic-plus.api.js';
 
 @Module({
-  providers: [RaiderIoHttpService, RaiderIoCharacterApi, RaiderIoGuildApi, RaiderIoRunApi],
-  exports: [RaiderIoCharacterApi, RaiderIoGuildApi, RaiderIoRunApi],
+  providers: [RaiderIoHttpService, RaiderIoCharacterApi, RaiderIoGuildApi, RaiderIoMythicPlusApi],
+  exports: [RaiderIoCharacterApi, RaiderIoGuildApi, RaiderIoMythicPlusApi],
 })
 export class RaiderIoModule {}

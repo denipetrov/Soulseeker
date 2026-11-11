@@ -8,7 +8,7 @@ import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
-import { RaiderIoRunApi } from '../../raiderio/run.api.js';
+import { RaiderIoMythicPlusApi } from '../../raiderio/mythic-plus.api.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import { WORLD } from '../bosses/dto/bosses-query.dto.js';
@@ -36,7 +36,7 @@ export class MplusRunService {
   private readonly cacheTtlSeconds: number;
 
   constructor(
-    private readonly runs: RaiderIoRunApi,
+    private readonly runs: RaiderIoMythicPlusApi,
     private readonly mongo: MongoService,
     private readonly cache: CacheService,
     private readonly catalogue: PveCatalogue,

@@ -797,7 +797,7 @@ one page at a time.
 ### PvE Mythic+ run
 
 `GET /pve/mplus-run?keystoneRunId=[&season=]` (`src/pve/mplus-run/`) returns one run's
-details from Raider.io's `mythic-plus/run-details` (`RaiderIoRunApi`,
+details from Raider.io's `mythic-plus/run-details` (`RaiderIoMythicPlusApi`,
 `RAIDERIO_PATH_MPLUS_RUN_DETAILS`).
 
 - **The season matters.** Raider.io requires it, and run ids are per season: the wrong
@@ -822,6 +822,28 @@ details from Raider.io's `mythic-plus/run-details` (`RaiderIoRunApi`,
   - **404** for a run Raider.io does not know (its 404 "could not find keystone run", or a
     400); not cached.
   - **503** when the Raider.io budget is spent, **502** when it fails.
+
+### PvE Mythic+ cutoffs
+
+`GET /pve/mplus-cutoffs?region=&season=` (`src/pve/mplus-cutoffs/`) is a proxy for
+Raider.io's `mythic-plus/cutoff-analysis/summary` (`RaiderIoMythicPlusApi.getCutoffAnalysis`,
+`RAIDERIO_PATH_MPLUS_CUTOFF_ANALYSIS`, sent with `format=json`).
+
+- **Parameters.** `region`: `world` (default; Raider.io takes it as is) or `us`, `eu`,
+  `kr`, `tw`, `cn`. `season`: `current` (default) or a slug, resolved by
+  `MplusSeasonResolver`, so an unknown slug is a 404 before Raider.io is asked.
+- **Answer.** Raider.io's JSON as it comes (~25–42 KB):
+  - `populations`: overall, plus Horde and Alliance on a single region, each with the title
+    cutoff and the 0.1 / 1 / 5 / 10 / 25 / 40 % scores;
+  - `history`: one entry per day since the season started, with the population and the
+    score at each percentile;
+  - the snapshot date and update time.
+  - Raider.io's quirks pass through: MN 1's `season` field reads `season-mn-1-cutoffs`.
+- **404** when Raider.io has no analysis for the season or region (its 404 "Unknown cutoff
+  season or region"): none for TWW 1 or Dragonflight, nor CN in TWW 3. Not cached. **503**
+  for a spent budget, **502** when Raider.io fails.
+- **Cache.** Per season and region for `MPLUS_CUTOFFS_CACHE_TTL_SECONDS` (1 h); Raider.io
+  dates its snapshot by day. ~0.3–0.8 s uncached, ~10 ms cached.
 
 ### PvE Mythic+ compositions
 
