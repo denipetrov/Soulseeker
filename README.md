@@ -89,6 +89,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | token | One guild from Raider.io, one widget per call: the summary (current raids' progression and rankings, ranks 0–1), `showFullRoster=true` (never cached), `raidEncounters=<raid>&difficulty=<difficulty>`, or the same plus `boss=<boss>` for that kill with its roster; cached 1 h, boss kills 24 h |
 | `GET /pve/raids` | token | Every raid Rankwarden catalogues: bosses, icon, regional start and end dates |
 | `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row&page=1` | token | The Mythic+ run board, paged; past seasons from the archive |
+| `GET /pve/mplus-run?keystoneRunId=19324786` | token | One Mythic+ run from Raider.io: dungeon, level, score, times, affixes, roster |
 | `GET /pve/mplus-compositions?region=world&season=current&dungeon=murder-row&top=1000` | token | The 50 most played party compositions among a board's best runs |
 | `GET /pve/spec-representation?region=world&dungeonSlug=all&season=current&getSeasons=true` | token | Which specs a Mythic+ season's best runs were played with, per region and dungeon |
 | `GET /pve/tier-list?region=world` | token | Each Mythic+ spec of the current season scored 0–100 and ranked S to D, as the PvP tier list |

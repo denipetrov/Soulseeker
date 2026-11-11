@@ -794,6 +794,35 @@ one page at a time.
 - **Cache.** Pages and totals are kept in Redis for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min).
   A 100-run page is ~135 KB before compression.
 
+### PvE Mythic+ run
+
+`GET /pve/mplus-run?keystoneRunId=[&season=]` (`src/pve/mplus-run/`) returns one run's
+details from Raider.io's `mythic-plus/run-details` (`RaiderIoRunApi`,
+`RAIDERIO_PATH_MPLUS_RUN_DETAILS`).
+
+- **The season matters.** Raider.io requires it, and run ids are per season: the wrong
+  season does not fail but answers that season's run of the same id (19324786 is a Murder
+  Row +22 in MN 2 and an Algeth'ar Academy +10 in MN 1). So the season sent is, in order:
+  1. `season` when given, checked against the catalogue (404 if unknown);
+  2. the run's season as Rankwarden stores it: `mplus_runs` (`run_identity`: season ×
+     region `$in`, then the id) or `mplus_archive_runs` (`archive_run_identity`);
+  3. the current season.
+- **Shape.** Raider.io's own field names, as the guild boss kill: `season`,
+  `keystone_run_id`, `dungeon`, `mythic_level`, `score`, `clear_time_ms`,
+  `keystone_time_ms`, `time_remaining_ms`, `num_chests`, `completed_at`, `faction`,
+  `weekly_modifiers` (affixes in full) and `roster`.
+  - The roster is passed through as Raider.io gives it (character with talents, guild,
+    role, items, ranks), like the boss kill's.
+  - The other ~1 MB of Raider.io's answer (logged details, videos, permissions) is
+    dropped.
+- **Size and cost.** ~220 KB, ~28 KB with brotli. ~1.3 s for the first fetch, since
+  Raider.io's answer is 1.2 MB, then ~40 ms. A finished run does not change, so it is
+  cached per season and id for `MPLUS_RUN_CACHE_TTL_SECONDS` (a day).
+- **Errors.**
+  - **404** for a run Raider.io does not know (its 404 "could not find keystone run", or a
+    400); not cached.
+  - **503** when the Raider.io budget is spent, **502** when it fails.
+
 ### PvE Mythic+ compositions
 
 `GET /pve/mplus-compositions` (`src/pve/mplus-compositions/`) returns the 50 most played

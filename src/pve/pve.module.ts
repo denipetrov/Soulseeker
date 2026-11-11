@@ -14,6 +14,8 @@ import { MplusLeaderboardController } from './mplus-leaderboard/mplus-leaderboar
 import { MplusLeaderboardService } from './mplus-leaderboard/mplus-leaderboard.service.js';
 import { MplusCompositionsController } from './mplus-compositions/mplus-compositions.controller.js';
 import { MplusCompositionsService } from './mplus-compositions/mplus-compositions.service.js';
+import { MplusRunController } from './mplus-run/mplus-run.controller.js';
+import { MplusRunService } from './mplus-run/mplus-run.service.js';
 import { MplusRunsController } from './mplus-runs/mplus-runs.controller.js';
 import { MplusRunsService } from './mplus-runs/mplus-runs.service.js';
 import { MplusSeasonsController } from './mplus-seasons/mplus-seasons.controller.js';
@@ -50,6 +52,7 @@ import { MplusSeasonResolver } from './shared/mplus-season.resolver.js';
     MplusCompositionsController,
     PveRepresentationController,
     PveTierListController,
+    MplusRunController,
   ],
   providers: [
     PveCharacterService,
@@ -64,6 +67,7 @@ import { MplusSeasonResolver } from './shared/mplus-season.resolver.js';
     MplusCompositionsService,
     PveRepresentationService,
     PveTierListService,
+    MplusRunService,
   ],
 })
 export class PveModule {}
