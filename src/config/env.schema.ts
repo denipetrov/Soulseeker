@@ -363,6 +363,8 @@ export const envSchema = z.object({
    * ladder, and a spec's place moves over days, not within the hour.
    */
   TIER_LIST_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long one hero talent breakdown (region, bracket, top) is reused. */
+  HERO_TALENTS_CACHE_TTL_SECONDS: positiveInt(900),
   /**
    * How long a PvP character page is served without asking Blizzard again. One
    * page costs about 13 Blizzard requests, so this is long on purpose.

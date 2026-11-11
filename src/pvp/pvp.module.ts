@@ -7,6 +7,8 @@ import { CharacterLoader } from './character/character.loader.js';
 import { PvpCharacterService } from './character/character.service.js';
 import { CutoffsController } from './cutoffs/cutoffs.controller.js';
 import { CutoffsService } from './cutoffs/cutoffs.service.js';
+import { HeroTalentsController } from './hero-talents/hero-talents.controller.js';
+import { HeroTalentsService } from './hero-talents/hero-talents.service.js';
 import { BoardEnricher } from './leaderboard/board-enricher.service.js';
 import { LeaderboardController } from './leaderboard/leaderboard.controller.js';
 import { LeaderboardService } from './leaderboard/leaderboard.service.js';
@@ -29,6 +31,7 @@ import { TierListService } from './tier-list/tier-list.service.js';
     PvpCharacterController,
     CutoffsController,
     TierListController,
+    HeroTalentsController,
   ],
   providers: [
     PvpSeasonsService,
@@ -39,6 +42,7 @@ import { TierListService } from './tier-list/tier-list.service.js';
     PvpCharacterService,
     CutoffsService,
     TierListService,
+    HeroTalentsService,
   ],
   exports: [PvpSeasonsService],
 })

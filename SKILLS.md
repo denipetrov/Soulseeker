@@ -443,6 +443,40 @@ current season's ladder from 0 to 100 and cuts the specs into tiers. Any family:
   with no spec at all, however many specs are listed, is a **404** and is not cached; so is a region without a current
   season. The response is ~10 KB for Shuffle.
 
+### PvP hero talents
+
+`GET /pvp/hero-talents?region=&bracket=&top=` (`src/pvp/hero-talents/`) shows which hero
+talent trees each spec's best players use, for a page like drustvar's hero-talents stats.
+
+- **Parameters.** `region`: a region or `world`. `bracket`: `2v2`, `3v3`, `rbg`, `shuffle`
+  or `blitz`. `top`: characters per spec, 1–500, default 50. Always the current season.
+- **Reads.**
+  - For every spec of `SPECS_BY_CLASS`, its top `top` rows of the family's ratings
+    collection through `spec_board`: forty short index walks, run together. On `world` the
+    regions are `$in` and merge by rating.
+  - On 2v2, 3v3 and RBG a row's spec is the character's active one, known only once
+    Rankwarden has enriched the character, so a spec there counts enriched characters only.
+  - Then the characters' profiles: one `$in` per region (ids are unique only within a
+    region), projected to `profile.heroTalentTree` and `talentLoadouts[].{spec.name,
+    heroTalentTree}`.
+- **Which tree** (`treeOf`, unit-tested): on Shuffle and Blitz, the loadout of the ladder's
+  own spec, never the active spec's (Rankwarden's reader rule). On 2v2, 3v3 and RBG, the
+  active spec's tree, which is the spec the row counts for.
+- **Shape.**
+  - `{ region, bracket, seasonId, seasonName, top, computedAt, classes }`, every class with
+    every spec in the game's order. A spec nobody plays has zeros and nulls.
+  - Per spec: `characters` (rows read, at most `top`), `covered` (those with a known tree;
+    the rest are not enriched yet), `minRating` and `maxRating` over `characters`, and
+    `heroTalents`.
+  - Each tree has `{ id, name, count, share }`, with `share` of `covered`, most played first
+    (equal counts by id).
+- **Cost.** World 3v3 at top 50 takes ~90 ms uncached; US Blitz at top 100 ~160 ms. Cached
+  in Redis per region, season, bracket and `top` for `HERO_TALENTS_CACHE_TTL_SECONDS`
+  (15 min).
+- **Local data.** EU characters are not enriched in the local database, so EU Shuffle shows
+  25/0 covered and EU 3v3 has no rows with a spec. US 3v3 is fully covered; US Blitz is
+  partly covered (Arms 35 of 100).
+
 ### PvP character
 
 `GET /pvp/character?region=&realmSlug=&characterName=[&locale=en_US][&forceRefresh=true]`

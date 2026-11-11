@@ -81,6 +81,7 @@ curl -H "Authorization: Bearer <access_token>" localhost:3001/session
 | `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | token | A PvP ladder page: live ratings enriched from `characters`, or a finished season's archive; optional `class`/`spec` for the current season |
 | `GET /pvp/cutoffs?region=eu&bracket=shuffle` | token | The current season's title cutoffs (per spec on Shuffle and Blitz) and how many of each spec reach them |
 | `GET /pvp/tier-list?region=eu&bracket=shuffle` | token | Each spec of the current season's ladder scored 0–100 and ranked S to D |
+| `GET /pvp/hero-talents?region=world&bracket=3v3&top=50` | token | Which hero talent trees each spec's top characters play, by class |
 | `GET /pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | token | Every stored day of the last 31, oldest first: each spec's count and share, for a graph over time |
 | `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20` | token | Which specs are played at or above a rating on one day; `getEarliestDate=true` adds the first day with data |
 | `GET /pvp/character?region=us&realmSlug=demon-soul&characterName=Manongauz&locale=en_US` | token | One PvP character from Blizzard: profile, ladders, talents, stats, equipment, render and PvP titles; cached 6 h, `forceRefresh=true` once per 5 min; pushes the ratings to Rankwarden |
