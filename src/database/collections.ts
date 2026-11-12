@@ -36,6 +36,7 @@ export const Collections = {
   // Raids.
   Raids: 'raids',
   Guilds: 'guilds',
+  Bosses: 'bosses',
 } as const;
 
 export type ReadCollection = (typeof Collections)[keyof typeof Collections];
@@ -52,4 +53,57 @@ export const Indexes = {
   MplusCharacterSearch: 'mplus_character_search',
   /** `{ searchName: 1 }` on `guilds`. */
   GuildSearch: 'guild_search',
+} as const;
+
+/**
+ * What a Mythic+ board index narrows by, besides season: nothing, a profile
+ * field, or `isFullyCovered`.
+ */
+export type MplusBoardKind = 'score' | 'class' | 'spec' | 'role' | 'covered';
+
+/**
+ * Rankwarden's Mythic+ board indexes, by collection, board kind, and whether
+ * they serve one region or `world`. Every one is `season` (then `region`, for
+ * one region), then the kind's field — none, `profile.classId`,
+ * `profile.specId`, `profile.role` or `isFullyCovered` — then
+ * `mythicScore: -1`. Part of the same contract as `Indexes`.
+ *
+ * The live collection has no score board without `region`: `world` uses
+ * `mplus_score_board` with the region spelled out as `$in` every region.
+ */
+export const MplusBoardIndexes = {
+  live: {
+    score: { world: 'mplus_score_board', region: 'mplus_score_board' },
+    class: { world: 'mplus_class_board', region: 'mplus_class_region_board' },
+    spec: { world: 'mplus_spec_board', region: 'mplus_spec_region_board' },
+    role: { world: 'mplus_role_board', region: 'mplus_role_region_board' },
+    covered: { world: 'mplus_covered_board', region: 'mplus_covered_region_board' },
+  },
+  archive: {
+    score: { world: 'archive_score_board', region: 'archive_score_region_board' },
+    class: { world: 'archive_class_board', region: 'archive_class_region_board' },
+    spec: { world: 'archive_spec_board', region: 'archive_spec_region_board' },
+    role: { world: 'archive_role_board', region: 'archive_role_region_board' },
+    covered: { world: 'archive_covered_board', region: 'archive_covered_region_board' },
+  },
+} as const satisfies Record<
+  'live' | 'archive',
+  Record<MplusBoardKind, { world: string; region: string }>
+>;
+
+/**
+ * Rankwarden's Mythic+ run board indexes: `season`, then `region` (live, and
+ * the archive's region board), then `dungeon.id` for a dungeon board, then
+ * `score: -1`. The live collection has no index without `region`: `world`
+ * spells the region out as `$in` every region. The archive has no region and
+ * dungeon index together: that board walks the dungeon's and checks the region.
+ * Part of the same contract as `Indexes`.
+ */
+export const MplusRunIndexes = {
+  live: { board: 'run_board', dungeon: 'run_dungeon_board' },
+  archive: {
+    board: 'archive_run_board',
+    region: 'archive_run_region_board',
+    dungeon: 'archive_run_dungeon_board',
+  },
 } as const;

@@ -62,7 +62,20 @@ export interface MplusCharacterDocument {
     role: string | null;
   };
   mythicScore: number;
+  /**
+   * The `mythicScore` stored before Rankwarden's latest write, whether or not it
+   * changed: equal to it when the character gained nothing. Null on a
+   * character's first write, and always on the archive's copies (written once).
+   * Absent on documents written before Rankwarden began recording it.
+   */
+  previousMythicScore?: number | null;
   dungeonsCovered: number;
+  /**
+   * Whether `dungeonRuns` covers every dungeon the season lists, so that
+   * `mythicScore` is the whole score rather than a partial sum. False when the
+   * season's dungeon list is unknown. Indexed with `mythicScore` by Rankwarden.
+   */
+  isFullyCovered: boolean;
   /** Best run per dungeon, highest score first. */
   dungeonRuns: DungeonRun[];
   updatedAt: Date;

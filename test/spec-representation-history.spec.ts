@@ -109,6 +109,7 @@ describe('GET /pvp/spec-representation/history', () => {
 
     expect(last).toEqual({
       date: iso(today),
+      regions: ['us'],
       computedAt: new Date(today.getTime() + 8 * 3_600_000).toISOString(),
       total: 120,
       classified: 100,

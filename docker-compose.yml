@@ -39,6 +39,8 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       MONGODB_URI: mongodb://host.docker.internal:27017
+      # Rankwarden runs on the host: `localhost` here would be this container.
+      RANKWARDEN_BASE_URL: http://host.docker.internal:3000
       # Avast (or any TLS-scanning proxy) re-signs the container's HTTPS too.
       # Point this at its root certificate, mounted below, or leave it unset.
       NODE_EXTRA_CA_CERTS: ${DOCKER_EXTRA_CA:+/certs/extra-ca.pem}

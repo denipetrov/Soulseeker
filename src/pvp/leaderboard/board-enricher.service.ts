@@ -10,6 +10,7 @@ import type { LeaderboardEntry } from './leaderboard.types.js';
 /** What a ratings row has to carry to become an entry. */
 export const ROW_PROJECTION = {
   _id: 0,
+  region: 1,
   characterId: 1,
   bracket: 1,
   rating: 1,
@@ -17,7 +18,10 @@ export const ROW_PROJECTION = {
   spec: 1,
 } as const;
 
-export type BoardRow = Pick<RatingRow, 'characterId' | 'bracket' | 'rating' | 'class' | 'spec'>;
+export type BoardRow = Pick<
+  RatingRow,
+  'region' | 'characterId' | 'bracket' | 'rating' | 'class' | 'spec'
+>;
 
 /** What enrichment needs of a profile, and nothing else: talent codes are kilobytes. */
 const PROFILE_PROJECTION = {
@@ -46,6 +50,34 @@ export class BoardEnricher {
     const characters = await this.charactersOf(rows, season);
 
     return rows.map((row) => currentEntry(row, characters.get(row.characterId), season));
+  }
+
+  /**
+   * Rows of several regions (a `world` board), each enriched from its own
+   * region's characters and measured against its own region's cutoffs —
+   * character ids are unique only within a region. One read per region, run
+   * together; the rows keep their order.
+   */
+  async entriesAcross(
+    rows: readonly BoardRow[],
+    seasons: readonly PvpSeason[],
+  ): Promise<LeaderboardEntry[]> {
+    const entries = new Array<LeaderboardEntry>(rows.length);
+
+    await Promise.all(
+      seasons.map(async (season) => {
+        const indexes = rows.flatMap((row, i) => (row.region === season.region ? [i] : []));
+        if (indexes.length === 0) return;
+
+        const mapped = await this.entries(
+          indexes.map((i) => rows[i]!),
+          season,
+        );
+        indexes.forEach((i, n) => (entries[i] = mapped[n]!));
+      }),
+    );
+
+    return entries.filter((entry) => entry !== undefined);
   }
 
   /** The rows' characters, in one read, with only the ladders the rows are on. */

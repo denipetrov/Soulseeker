@@ -1,0 +1,203 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Collection, Filter } from 'mongodb';
+
+import type { Env } from '../../config/env.schema.js';
+import { Collections, MplusRunIndexes } from '../../database/collections.js';
+import { MongoService } from '../../database/mongo.service.js';
+import { MAX_OFFSET } from '../../pvp/leaderboard/dto/leaderboard-query.dto.js';
+import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
+import { CacheService } from '../../redis/cache.service.js';
+import { WORLD } from '../bosses/dto/bosses-query.dto.js';
+import { MplusSeasonsService } from '../mplus-seasons/mplus-seasons.service.js';
+import { MplusSeasonResolver } from '../shared/mplus-season.resolver.js';
+import type { MplusRunsQuery } from './dto/mplus-runs-query.dto.js';
+import type { MplusRun, MplusRunsResponse } from './mplus-runs.types.js';
+
+/**
+ * One run board — region, season, and every dungeon or one — resolved to what
+ * reads it: the collection, the filter and the index hint. Shared with the
+ * composition counts, so both read exactly the same board.
+ */
+export interface MplusRunBoard {
+  season: string;
+  live: boolean;
+  /** `<region>:<season>:<dungeon or ->`, for cache keys. */
+  id: string;
+  filter: Filter<RunDocument>;
+  hint: string;
+  collection: Collection<RunDocument>;
+}
+
+export interface RunDocument extends Omit<MplusRun, 'rank' | 'completedAt'> {
+  season: string;
+  completedAt: Date;
+  /** Set on a live run Rankwarden is about to prune: never on the board. */
+  missedSince?: Date;
+}
+
+const PROJECTION = {
+  _id: 0,
+  keystoneRunId: 1,
+  region: 1,
+  score: 1,
+  dungeon: 1,
+  mythicLevel: 1,
+  clearTimeMs: 1,
+  keystoneTimeMs: 1,
+  timeRemainingMs: 1,
+  numChests: 1,
+  completedAt: 1,
+  affixIds: 1,
+  faction: 1,
+  roster: 1,
+} as const;
+
+/**
+ * The Mythic+ run board, one page at a time, best `score` first, from
+ * Rankwarden's `mplus_runs` (the live season) or `mplus_archive_runs` (any
+ * other; `MplusSeasonResolver` decides).
+ *
+ * - **Dungeon** is a slug of the season's dungeons (`GET /pve/mplus-seasons`),
+ *   matched by its id, which the indexes carry; a slug the season does not run
+ *   is a 404.
+ * - **Reads** are hinted to the board index (`MplusRunIndexes`). On the live
+ *   `world` board the region is spelled out as `$in` every region, so the
+ *   per-region ranges merge in score order. A live run Rankwarden is about to
+ *   prune (`missedSince`) is never listed.
+ * - **Total** is counted per board, not per page, and cached apart: the
+ *   `missedSince` check makes the live `world` count read every run (~0.5 s
+ *   for ~800,000), and every page of a board shares it.
+ *
+ * Pages and totals are cached in Redis for `MPLUS_RUNS_CACHE_TTL_SECONDS`.
+ */
+@Injectable()
+export class MplusRunsService {
+  private readonly cacheTtlSeconds: number;
+
+  constructor(
+    private readonly mongo: MongoService,
+    private readonly cache: CacheService,
+    private readonly seasons: MplusSeasonResolver,
+    private readonly seasonList: MplusSeasonsService,
+    config: ConfigService<Env, true>,
+  ) {
+    this.cacheTtlSeconds = config.get('MPLUS_RUNS_CACHE_TTL_SECONDS', { infer: true });
+  }
+
+  /**
+   * The board asked for: `season` (`current` or a slug) resolved, and `dungeon`
+   * (a slug) checked against it — a 404 for either that does not exist.
+   */
+  async board(region: string, seasonParam: string, dungeon: string | null): Promise<MplusRunBoard> {
+    const { slug: season, live } = await this.seasons.resolve(region, seasonParam);
+    const dungeonId = dungeon ? (await this.seasonList.dungeon(season, dungeon)).id : null;
+
+    return {
+      season,
+      live,
+      id: [region, season, dungeon ?? '-'].join(':'),
+      filter: this.filter(region, season, dungeonId, live),
+      hint: this.hint(region, dungeonId, live),
+      collection: this.collection(live),
+    };
+  }
+
+  async runs(query: MplusRunsQuery): Promise<MplusRunsResponse> {
+    const { season, live, id, filter, hint, collection } = await this.board(
+      query.region,
+      query.season,
+      query.dungeon,
+    );
+    const board = `pve:mplus-runs:${id}`;
+
+    const [runs, total] = await Promise.all([
+      this.cache.getOrLoad(
+        `${board}:${query.page}:${query.pageSize}`,
+        () => this.page(collection, filter, hint, query),
+        this.cacheTtlSeconds,
+      ),
+      this.cache.getOrLoad(
+        `${board}:total`,
+        () => collection.countDocuments(filter, { hint }),
+        this.cacheTtlSeconds,
+      ),
+    ]);
+
+    return {
+      region: query.region,
+      season,
+      current: live,
+      dungeon: query.dungeon,
+      page: query.page,
+      pageSize: query.pageSize,
+      total: total!,
+      totalPages: Math.min(
+        Math.ceil(total! / query.pageSize),
+        Math.floor(MAX_OFFSET / query.pageSize) + 1,
+      ),
+      runs: runs!,
+    };
+  }
+
+  private filter(
+    region: string,
+    season: string,
+    dungeonId: number | null,
+    live: boolean,
+  ): Filter<RunDocument> {
+    const filter: Filter<RunDocument> = { season };
+    if (region !== WORLD) filter.region = region;
+    else if (live) filter.region = { $in: [...RAIDERIO_REGIONS] };
+    if (dungeonId !== null) filter['dungeon.id'] = dungeonId;
+    if (live) filter.missedSince = { $exists: false };
+
+    return filter;
+  }
+
+  private hint(region: string, dungeonId: number | null, live: boolean): string {
+    if (live) return dungeonId !== null ? MplusRunIndexes.live.dungeon : MplusRunIndexes.live.board;
+    // The archive has no region and dungeon index: a dungeon is the narrower range.
+    if (dungeonId !== null) return MplusRunIndexes.archive.dungeon;
+
+    return region === WORLD ? MplusRunIndexes.archive.board : MplusRunIndexes.archive.region;
+  }
+
+  private collection(live: boolean) {
+    return this.mongo.collection<RunDocument>(
+      live ? Collections.MplusRuns : Collections.MplusArchiveRuns,
+    );
+  }
+
+  private async page(
+    collection: Collection<RunDocument>,
+    filter: Filter<RunDocument>,
+    hint: string,
+    query: MplusRunsQuery,
+  ): Promise<MplusRun[]> {
+    const offset = (query.page - 1) * query.pageSize;
+    const docs = await collection
+      .find(filter, { projection: PROJECTION, hint })
+      .sort({ score: -1 })
+      .skip(offset)
+      .limit(query.pageSize)
+      .toArray();
+
+    return docs.map((doc, i) => ({
+      rank: offset + i + 1,
+      keystoneRunId: doc.keystoneRunId,
+      region: doc.region,
+      score: doc.score,
+      dungeon: doc.dungeon,
+      mythicLevel: doc.mythicLevel,
+      clearTimeMs: doc.clearTimeMs,
+      keystoneTimeMs: doc.keystoneTimeMs ?? null,
+      timeRemainingMs: doc.timeRemainingMs ?? null,
+      numChests: doc.numChests ?? null,
+      completedAt: new Date(doc.completedAt).toISOString(),
+      affixIds: doc.affixIds ?? [],
+      faction: doc.faction ?? null,
+      roster: doc.roster ?? [],
+    }));
+  }
+}

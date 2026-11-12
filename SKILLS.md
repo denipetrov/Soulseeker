@@ -239,6 +239,52 @@ detail and the cutoff of the ladder it shows.
     `specCutoffs`.
   - **Live cutoffs move** until the season ends; `final: false` marks them.
 
+### PvP `world`
+
+Every PvP endpoint that takes `region` (the leaderboard, title cutoffs, spec
+representation with its history, and the tier list) also takes `region=world`: every
+region together, as the Mythic+ and raid endpoints already do. The schema is
+`pvpBoardSchema` (`src/pvp/world.ts`). `region` stays required, and `regionsOf(board)` lists
+the regions a board covers. The character page is one character, so it has none.
+
+- **One season everywhere.** Blizzard's PvP season ids are global (42 in every region), so
+  a world board is the same season across regions: `region: { $in: [...] }` on Rankwarden's
+  indexes, which lead with season then region. MongoDB merges the regions' ranges in rating
+  order, with no in-memory sort.
+- **Leaderboard.** The season is looked up per region, and a region without it is left out.
+  At a rollover (live in one region, archived in another) the live regions form the board.
+  - Rows are enriched per region (`BoardEnricher.entriesAcross`): character ids are unique
+    only within a region.
+  - Every entry now carries `region`, on single-region boards too. `inTitleRange` uses the
+    entry's own region's cutoff.
+  - The board's `cutoff` is null on `world`, and `regionCutoffs` gives each region's.
+  - Archived rows are projected with their `region` for the same reason. Without it, a
+    world archive judged no row in range.
+- **Cutoffs.** Blizzard sets them per region (3v3: US 2954, EU 2982), so there is no world
+  cutoff. Each region is counted against its own and the counts summed: Shuffle total
+  1,196 = 464 + 458 + 151 + 123.
+  - `cutoff` is null, and `regionCutoffs` (3v3/RBG) or each spec's `regionCutoffs`
+    (Shuffle/Blitz) give each region's.
+  - The class + spec list merges every region's qualifying characters by rating.
+  - `final` means final in every region. `rewardsFetchedAt` is the oldest region's read.
+  - A region without cutoffs yet is left out; only none at all is a 404. The regions used
+    are those on the newest season.
+- **Spec representation.** Rankwarden writes snapshots per region only, so a world day is
+  that day's regional snapshots added up (`combineSnapshots`, `representation/combine.ts`,
+  unit-tested).
+  - `total`, `classified`, each spec's `count` and `heroTalentsClassified`, and each hero
+    talent tree's `count` are summed, and the shares are worked out again from the sums,
+    never averaged. Real data: 32,863 = 14,440 + 17,686 + 441 + 296, and the shares sum
+    to 1.
+  - Per region, a rollover day keeps the newer season. `computedAt` is the latest region's.
+  - `regions` (now on every answer, and on each history day) lists the regions in it.
+  - `latest` is the newest day any region has, combining the regions that have it.
+    `earliestDate` is the first day any region has classified specs.
+- **Tier list.** Both reads run across every region on the current season: the top 5,000
+  of all of them merged by rating, and every row at or above 1500. ~175 ms uncached for
+  world Shuffle.
+- Tests: `test/pvp-world.spec.ts`, with EU and US fixtures sharing a character id.
+
 ### PvP leaderboard
 
 `GET /pvp/leaderboard?region=&seasonId=&bracket=[&class=&spec=][&page=&pageSize=]`
@@ -396,6 +442,40 @@ current season's ladder from 0 to 100 and cuts the specs into tiers. Any family:
   `TIER_LIST_CACHE_TTL_SECONDS` (1 h), so `computedAt` stays the same until then. A ladder
   with no spec at all, however many specs are listed, is a **404** and is not cached; so is a region without a current
   season. The response is ~10 KB for Shuffle.
+
+### PvP hero talents
+
+`GET /pvp/hero-talents?region=&bracket=&top=` (`src/pvp/hero-talents/`) shows which hero
+talent trees each spec's best players use, for a page like drustvar's hero-talents stats.
+
+- **Parameters.** `region`: a region or `world`. `bracket`: `2v2`, `3v3`, `rbg`, `shuffle`
+  or `blitz`. `top`: characters per spec, 1–500, default 50. Always the current season.
+- **Reads.**
+  - For every spec of `SPECS_BY_CLASS`, its top `top` rows of the family's ratings
+    collection through `spec_board`: forty short index walks, run together. On `world` the
+    regions are `$in` and merge by rating.
+  - On 2v2, 3v3 and RBG a row's spec is the character's active one, known only once
+    Rankwarden has enriched the character, so a spec there counts enriched characters only.
+  - Then the characters' profiles: one `$in` per region (ids are unique only within a
+    region), projected to `profile.heroTalentTree` and `talentLoadouts[].{spec.name,
+    heroTalentTree}`.
+- **Which tree** (`treeOf`, unit-tested): on Shuffle and Blitz, the loadout of the ladder's
+  own spec, never the active spec's (Rankwarden's reader rule). On 2v2, 3v3 and RBG, the
+  active spec's tree, which is the spec the row counts for.
+- **Shape.**
+  - `{ region, bracket, seasonId, seasonName, top, computedAt, classes }`, every class with
+    every spec in the game's order. A spec nobody plays has zeros and nulls.
+  - Per spec: `characters` (rows read, at most `top`), `covered` (those with a known tree;
+    the rest are not enriched yet), `minRating` and `maxRating` over `characters`, and
+    `heroTalents`.
+  - Each tree has `{ id, name, count, share }`, with `share` of `covered`, most played first
+    (equal counts by id).
+- **Cost.** World 3v3 at top 50 takes ~90 ms uncached; US Blitz at top 100 ~160 ms. Cached
+  in Redis per region, season, bracket and `top` for `HERO_TALENTS_CACHE_TTL_SECONDS`
+  (15 min).
+- **Local data.** EU characters are not enriched in the local database, so EU Shuffle shows
+  25/0 covered and EU 3v3 has no rows with a spec. US 3v3 is fully covered; US Blitz is
+  partly covered (Arms 35 of 100).
 
 ### PvP character
 
@@ -558,6 +638,25 @@ kills from Blizzard's `encounters/raids`.
   - The profile sends class, spec, race and role. The base profile's `HEALING` / `TANK` /
     `DPS` is spelled `healer` / `tank` / `dps`, as runs and Rankwarden spell it.
   - Nothing is pushed without a run in the season.
+- **`previousMythicScore`** (whole page only). The order is: read Raider.io and the stored
+  score together, answer, then sync.
+  - While the full page is fetched from Raider.io, the character's stored `mythicScore` for
+    the region's current season (`mplus_season_state`) is read from `mplus_characters` in
+    parallel, by `key` (`region/realm/lowercased name`). That is the score before this
+    page's push. `mythicPlusScores[0].scores.all`, Raider.io's, is the score now. The push
+    that follows brings Rankwarden up to date, so the next fresh page compares against it.
+  - It is cached with the full part, so a cached page answers the value it was fetched
+    with. It is absent on widget answers (`raidProgression`, `mplusSeasonScore`).
+  - It is null when Rankwarden has not stored the character for that season, or when
+    Raider.io's current season is not the stored one (a rollover Rankwarden has not seen).
+  - A failed read gives null and a warning; it never fails the page.
+  - Real check: Rooiben (eu/sylvanas) had 4366.7 stored, and Raider.io answered 4378.1.
+  - The two scores are not the same measure: Rankwarden's is summed over the runs it
+    stores. Once the push lands Raider.io's best runs, a fully covered character's stored
+    score follows Raider.io's.
+- **Docker.** `docker-compose.yml` points the app at `http://host.docker.internal:3000` for
+  Rankwarden, as it does for MongoDB. With `.env`'s `localhost:3000`, the container called
+  itself and every push failed with `ECONNREFUSED`.
 
 ### PvE guild
 
@@ -605,8 +704,10 @@ kills from Blizzard's `encounters/raids`.
 every raid and Mythic+ season Rankwarden catalogues, for the PvE character lookups.
 
 - **What it keeps.**
-  - From `raids`: each raid's `slug`, `name`, `expansionId` and `encounters` (`id`, `slug`,
-    `name`, in boss order).
+  - From `raids`: each raid's `slug`, `name`, `shortName`, `expansionId`, `icon`, `starts`
+    and `ends` per region (ISO strings), and `encounters` (`id`, `slug`, `name`, in boss
+    order). Raider.io's placeholder end for a raid still open, `2030-01-01`, becomes
+    `null`.
   - From `mplus_seasons`: each season's `slug`, `name`, `expansionId`, `dungeonIds`, and
     `cutoffs` per region. A region's cutoffs are the top 0.1% (`p999`) and top 1% (`p990`)
     minimum scores, from `cutoffs.<region>.quantiles.*.all.minScore`.
@@ -614,15 +715,401 @@ every raid and Mythic+ season Rankwarden catalogues, for the PvE character looku
     being read.
 - **Order.** Newest expansion first, then the latest to open within it, by the earliest
   regional start. Unlisted entries are kept, since a character's history may name them.
-- **In memory, per replica.** It is read at startup (`onApplicationBootstrap`), then again
-  on the first call after `PVE_CATALOGUE_TTL_SECONDS` (a day). There is a single flight
-  per replica. The top-percent cutoffs move through a live season, so they can be up to a
-  day behind Rankwarden.
-  - A failed reload keeps the last catalogue and is retried on the next call.
-  - A failure at startup is logged and does not stop the boot. Only a replica that has
-    never read the catalogue fails a call.
-- **API.** `catalogue()`, `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
+- **In Redis, shared by every replica.** Two values: the raids under
+  `ss:cache:pve:raids` (`RAIDS_CACHE_KEY`, ~32 KB) and the Mythic+ seasons under
+  `ss:cache:pve:mplus-seasons` (`MPLUS_SEASONS_CACHE_KEY`, ~3.5 KB).
+  - Each is filled on demand: the first call that finds its key missing reads Mongo and
+    stores the list for `PVE_CATALOGUE_TTL_SECONDS` (a day), through
+    `CacheService.getOrLoad`.
+  - Nothing is loaded at startup, and nothing is held in memory. Concurrent misses on one
+    replica share one read.
+  - The top-percent cutoffs move through a live season, so they can be up to a day behind
+    Rankwarden.
+  - If Redis is down, each call reads Mongo. If Mongo fails too while a key is missing,
+    the call fails (`GET /pve/raids` answers 503).
+  - To pick up a raid or season Rankwarden has just added, delete its key: the next call
+    refills it.
+- **API.** `raids()`, `currentExpansionRaids()`, `mplusSeasons()`,
   `raidSlugs()`, `mplusSeasonSlugs()`, `raid(slug)` and `mplusSeason(slug)`.
+
+### PvE raids
+
+`GET /pve/raids` (`src/pve/raids/raids.controller.ts`) lists every raid in the catalogue:
+`{ raids: CatalogueRaid[] }`, with all 31 raids today, ~32 KB before compression.
+
+- **Source.** `PveCatalogue.raids()`: the list in Redis, shared by every replica, read
+  from Mongo when it is missing. It is up to a day (`PVE_CATALOGUE_TTL_SECONDS`) behind
+  Rankwarden, which is fine: raids change a few times an expansion.
+- **Order.** Newest expansion first, then the latest to open within it. Unlisted raids
+  are included.
+- **Fields.**
+  - `ends.<region>` is null while the raid is open there.
+  - `icon` is Raider.io's value as stored: an icon name (`inv_1215_raid_achievement_kithix`)
+    or, on some raids, a numeric file id (`8039569`). It is null on Legion raids. The front
+    end resolves it to an image.
+- **503** only when the list is missing from Redis and Mongo cannot be read.
+
+### PvE Mythic+ runs
+
+`GET /pve/mplus-runs` (`src/pve/mplus-runs/`) returns timed runs by `score`, best first,
+one page at a time.
+
+- **Parameters** (all optional):
+  - `region`: `world` (default) or `us`, `eu`, `kr`, `tw`, `cn`.
+  - `season`: a slug or `current` (default).
+  - `dungeon`: a dungeon slug of that season.
+  - `page` and `pageSize`: the same paging as the leaderboards.
+- **Season.** `MplusSeasonResolver` (`src/pve/shared/`, shared with the M+ leaderboard)
+  resolves `current` and says whether the season is live.
+  - Live reads `mplus_runs` (~800,000 runs this season: 160k per region, 20k per dungeon
+    per region). Any other season reads `mplus_archive_runs` (7–10k per season).
+  - An unknown slug is a **404**.
+- **Dungeon.** The slug is looked up among the season's dungeons in
+  `MplusSeasonsService`'s cached list, and the board filters on its id (`dungeon.id`, which
+  the indexes carry). A dungeon the season does not run is a **404**: Murder Row is not in
+  MN 1.
+- **Reads** are hinted by name (`MplusRunIndexes`).
+  - Live: `run_board` or `run_dungeon_board`. On `world`, `region: { $in: [all five] }`
+    merges the regions in score order.
+  - Archive: `archive_run_board`, `archive_run_region_board` or
+    `archive_run_dungeon_board`. There is no region + dungeon index, so that board walks
+    the dungeon's range and checks the region.
+  - Live runs with `missedSince` (about to be pruned by Rankwarden) are never listed, as
+    Rankwarden's reader rules say.
+- **Total.** The `missedSince` check means every run is fetched to count. The live `world`
+  total costs ~0.5 s, against ~50 ms from the index alone. It is counted per board, not
+  per page, and cached apart (`<board>:total`), so every page of a board shares one count.
+  The first `world` request takes ~0.6 s; later ones ~30 ms.
+- **Paging** stops at row 200,000 (`MAX_OFFSET`, as on the other boards; ~0.4 s at that
+  depth). `totalPages` is capped at the last reachable page, so the live `world` board
+  shows 4,001 pages of 50, not 16,016. A page past it is a **400**.
+- **Shape.** `{ region, season, current, dungeon, page, pageSize, total, totalPages, runs }`.
+  - Each run has `rank` (its place on this board; the stored `rank` is the place on the
+    Raider.io board it was read from, and is dropped), `keystoneRunId`, `region`, `score`,
+    `dungeon` (`{ id, name, slug, shortName }`), `mythicLevel`, `clearTimeMs`,
+    `keystoneTimeMs`, `timeRemainingMs`, `numChests`, `completedAt`, `affixIds`, `faction`
+    and `roster` (five members, as stored).
+  - `rosterKeys` and `fetchedAt` are Rankwarden's and are left out.
+  - Affixes come by id: `/pve/mplus-seasons` lists them.
+- **Cache.** Pages and totals are kept in Redis for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min).
+  A 100-run page is ~135 KB before compression.
+
+### PvE Mythic+ run
+
+`GET /pve/mplus-run?keystoneRunId=[&season=]` (`src/pve/mplus-run/`) returns one run's
+details from Raider.io's `mythic-plus/run-details` (`RaiderIoMythicPlusApi`,
+`RAIDERIO_PATH_MPLUS_RUN_DETAILS`).
+
+- **The season matters.** Raider.io requires it, and run ids are per season: the wrong
+  season does not fail but answers that season's run of the same id (19324786 is a Murder
+  Row +22 in MN 2 and an Algeth'ar Academy +10 in MN 1). So the season sent is, in order:
+  1. `season` when given, checked against the catalogue (404 if unknown);
+  2. the run's season as Rankwarden stores it: `mplus_runs` (`run_identity`: season ×
+     region `$in`, then the id) or `mplus_archive_runs` (`archive_run_identity`);
+  3. the current season.
+- **Shape.** Raider.io's own field names, as the guild boss kill: `season`,
+  `keystone_run_id`, `dungeon`, `mythic_level`, `score`, `clear_time_ms`,
+  `keystone_time_ms`, `time_remaining_ms`, `num_chests`, `completed_at`, `faction`,
+  `weekly_modifiers` (affixes in full) and `roster`.
+  - The roster is passed through as Raider.io gives it (character with talents, guild,
+    role, items, ranks), like the boss kill's.
+  - The other ~1 MB of Raider.io's answer (logged details, videos, permissions) is
+    dropped.
+- **Size and cost.** ~220 KB, ~28 KB with brotli. ~1.3 s for the first fetch, since
+  Raider.io's answer is 1.2 MB, then ~40 ms. A finished run does not change, so it is
+  cached per season and id for `MPLUS_RUN_CACHE_TTL_SECONDS` (a day).
+- **Errors.**
+  - **404** for a run Raider.io does not know (its 404 "could not find keystone run", or a
+    400); not cached.
+  - **503** when the Raider.io budget is spent, **502** when it fails.
+
+### PvE Mythic+ cutoffs
+
+`GET /pve/mplus-cutoffs?region=&season=` (`src/pve/mplus-cutoffs/`) is a proxy for
+Raider.io's `mythic-plus/cutoff-analysis/summary` (`RaiderIoMythicPlusApi.getCutoffAnalysis`,
+`RAIDERIO_PATH_MPLUS_CUTOFF_ANALYSIS`, sent with `format=json`).
+
+- **Parameters.** `region`: `world` (default; Raider.io takes it as is) or `us`, `eu`,
+  `kr`, `tw`, `cn`. `season`: `current` (default) or a slug, resolved by
+  `MplusSeasonResolver`, so an unknown slug is a 404 before Raider.io is asked.
+- **Answer.** Raider.io's JSON as it comes (~25–42 KB):
+  - `populations`: overall, plus Horde and Alliance on a single region, each with the title
+    cutoff and the 0.1 / 1 / 5 / 10 / 25 / 40 % scores;
+  - `history`: one entry per day since the season started, with the population and the
+    score at each percentile;
+  - the snapshot date and update time.
+  - Raider.io's quirks pass through: MN 1's `season` field reads `season-mn-1-cutoffs`.
+- **404** when Raider.io has no analysis for the season or region (its 404 "Unknown cutoff
+  season or region"): none for TWW 1 or Dragonflight, nor CN in TWW 3. Not cached. **503**
+  for a spent budget, **502** when Raider.io fails.
+- **Cache.** Per season and region for `MPLUS_CUTOFFS_CACHE_TTL_SECONDS` (1 h); Raider.io
+  dates its snapshot by day. ~0.3–0.8 s uncached, ~10 ms cached.
+
+### PvE Mythic+ compositions
+
+`GET /pve/mplus-compositions` (`src/pve/mplus-compositions/`) returns the 50 most played
+party compositions among a board's best runs.
+
+- **Parameters.** `region`, `season` and `dungeon` are those of `/pve/mplus-runs` (one
+  schema, `mplusRunBoardSchema`). `top` is how many of the board's best runs to count:
+  default 1000, 1–10,000. There is no paging.
+- **Same board as the runs.** `MplusRunsService.board()` resolves the season (live or
+  archive), checks the dungeon (**404**), and gives the collection, filter and index hint.
+  Both endpoints read exactly the same runs, `missedSince` excluded.
+- **Composition.** The party's five class and spec pairs, whoever played them and in
+  whatever roster order (`topCompositions`, `compositions.ts`, unit-tested).
+  - Each roster is sorted tank, healer, damage dealers, then by class and spec id, so
+    reordered rosters match.
+  - Two specs of one class are different compositions. A member without a spec (rare) is
+    kept, with null spec.
+  - Equal counts rank by their best run: the runs are read best first, and the order of
+    first appearance is kept.
+- **Shape.** `{ region, season, current, dungeon, top, runs, compositions }`.
+  - `runs` is the runs read (`top`, or fewer on a smaller board).
+  - Each composition has `rank`, `count`, `share` (of `runs`, 0–1, four places) and
+    `members`. Each member has `class` and `spec` slugs (from `CLASS_IDS` / `SPEC_IDS`;
+    null for an unknown id), plus the stored `classId`, `className`, `specId`, `specName`
+    and `role`.
+- **Reads.** One index walk of `top` runs, projected to `roster.classId`, `className`,
+  `specId`, `specName` and `role`; grouping happens in the app. The default takes ~80 ms;
+  `top=10000` ~0.4 s.
+- **Cache.** Redis, per board and `top` (`pve:mplus-compositions:<region>:<season>:<dungeon>:<top>`),
+  for `MPLUS_RUNS_CACHE_TTL_SECONDS` (5 min), as the runs.
+- **Real data** (MN 2, world, top 1000): one party finished 52.6% of the runs (Blood DK,
+  Holy Paladin, Arms, Subtlety, Elemental). The top 50 cover 96.5% of the runs.
+
+### PvE spec representation
+
+`GET /pve/spec-representation` (`src/pve/spec-representation/`) returns which specs a
+Mythic+ season's best runs were played with, from Rankwarden's `mplus_spec_representation`.
+
+- **Season-based, not dated.** Rankwarden keeps one document per season, region and
+  dungeon. It recomputes the live season after every pass, overwriting it, and writes a
+  finished season once from the archive. So where `/pvp/spec-representation` takes `date`
+  and `getEarliestDate`, this takes:
+  - `season`: `current` (default) or a slug, resolved by `MplusSeasonResolver`;
+  - `getSeasons=true`: the seasons with a snapshot for that region and dungeon, newest
+    first, for a season picker.
+  - A dated history would need Rankwarden to write daily snapshots, as it does for PvP. If
+    it ever does, `date` can be added without breaking this.
+- **Other parameters.** `region`: `world` (default; Rankwarden's `region: 'all'`) or `us`,
+  `eu`, `kr`, `tw`, `cn`. `dungeonSlug`: `all` (default; `dungeonId: null`) or a dungeon
+  of the season, checked by `MplusSeasonsService.dungeon()`, which the run boards use too.
+- **Read.** One `findOne` by `mplus_representation_key` (season, region, dungeonId).
+  `getSeasons` adds a `distinct` over the 162 documents. Not cached, like the PvP
+  snapshot: ~25 ms.
+- **Shape.**
+  - `{ region, season, dungeon, source, computedAt, runs, slots, classified, roles, specs,
+    seasons? }`. `source` is `live` (still moving) or `archive` (final).
+  - Counted by roster slot, so a player in forty runs counts forty times, over the top of
+    each region's board.
+  - Each spec as stored: `classId`, `className`, `specId`, `specName`, `role`, `count`,
+    `percent` (of classified slots) and `rolePercent` (of its role's slots, the figure to
+    compare by), both **0–100**, unlike the PvP `share` (0–1). The `class` and `spec`
+    slugs come from `classSlugOf` / `specSlugOf` in `src/pvp/specs.ts`. Most played first.
+- **404** for a missing snapshot (`kr` before Rankwarden counts it, `season-tww-1`), a
+  season the catalogue does not know, or a dungeon the season does not run.
+
+### PvE tier list
+
+`GET /pve/tier-list?region=` (`src/pve/tier-list/`) is the PvP tier list's rules and
+shape, applied to the current Mythic+ season.
+
+- **Same scoring.** `scoreTierList` from `src/pvp/tier-list/tier-list.scoring.ts`, unchanged:
+  - top tier density 45, representation 35, average 20;
+  - rank-based points;
+  - the average weighed by count (50 phantom players at the floor);
+  - every `ALL_SPECS` spec listed;
+  - S/A/B/C/D lines at 10/25/30/25/10 %, moved to the widest drop within 2 specs.
+  The only change is the floor, which is now a parameter (`floor`, default `MIN_RATING`
+  1500), so PvP is unaffected.
+- **Mythic+ mapping.**
+  - The ladder is `mplus_characters` by `mythicScore`, each character counted once for its
+    profile spec. Ids become slugs through `classSlugOf` / `specSlugOf`.
+  - The floor is **2000, Keystone Master** (`MPLUS_MIN_SCORE`), PvP's 1500 counterpart.
+  - **Density** reads the board's top 5,000, everyone, as the leaderboard lists them
+    (`mplus_score_board`, regions merged on `world`). Today all 5,000 are fully covered.
+  - **Representation and average** count only **fully covered** characters at or above
+    2000 (`mplus_covered_board` / `_region_board`). A partial score is a partial sum (443
+    on average over one dungeon, against 3,691 over eight), so including them would rank
+    specs by Rankwarden's coverage. The user chose both the coverage rule and the floor.
+- **Parameters.** `region` only: `world` (default) or `us`, `eu`, `kr`, `tw`, `cn`. The
+  season is always the current one, as on PvP.
+- **Shape.** As PvP's, with `season` (slug) and `seasonName` in place of
+  `bracket`/`seasonId`, and `minScore` in place of `minRating`. Each spec entry is exactly
+  `TierListSpec`, so one front-end component draws both; `averageRating` holds the average
+  score.
+- **Cost.** ~150 ms uncached on `world` (95,885 covered characters grouped), ~45 ms for a
+  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:<region>:<season>`.
+- **Real data (MN 2, world).** S tier: Arms, Subtlety, Holy Paladin, Elemental, Blood DK,
+  the dominant composition. D: Destruction Warlock, Fire Mage.
+
+### PvE Mythic+ seasons
+
+`GET /pve/mplus-seasons` (`src/pve/mplus-seasons/`) returns every Mythic+ season with its
+dungeons and cutoffs, plus every affix: `{ seasons, affixes }`. It reads three small
+collections whole.
+
+- **Seasons** come from `mplus_seasons`, newest first (the catalogue's `newestFirst`). Each
+  has `slug`, `name`, `shortName`, `expansionId`, `blizzardSeasonId`, and `starts` and
+  `ends` per region. A running season's `2030-01-01` end is null, as on `/pve/raids`. The
+  `archive` marker is Rankwarden's bookkeeping and is left out.
+- **Dungeons.** Each season's `dungeonIds` is replaced by the full `mplus_dungeons`
+  documents in the season's order: `id`, `slug`, `name`, `shortName`, `challengeModeId`,
+  `keystoneTimerSeconds`, `iconUrl`, `backgroundImageUrl`, `expansionIds`.
+  - A dungeon runs in several seasons, so it repeats.
+  - An id the collection lacks keeps its `id`, with nulls. No season has one today.
+- **Cutoffs** per region as stored: `status`, `updatedAt`, `keystones` (title cutoffs) and
+  `quantiles` (`p999`, `p990`), each with `alliance`, `horde` and `all`. The fetch
+  bookkeeping (`fetchedAt`, `attempts`, `finalised`) is dropped. It is empty for a season
+  Rankwarden has none for; today only TWW 3, MN 1 and MN 2 have cutoffs.
+- **Affixes** from `mplus_affixes`, by id. They are not linked to seasons.
+- **Size and cache.** ~135 KB before compression, ~15 KB as brotli, ~30 ms uncached. The
+  whole answer is one Redis value, `ss:cache:pve:mplus-season-list`, filled on demand and
+  kept for `MPLUS_SEASONS_CACHE_TTL_SECONDS` (1 h), since a live season's cutoffs move
+  every M+ pass.
+  - The key is deliberately not `pve:mplus-seasons`: that is `PveCatalogue`'s slim season
+    list. The two once shared it, and each then served the other's shape. The test now
+    fills the catalogue's key first, to keep it so.
+
+### PvE Mythic+ leaderboard
+
+`GET /pve/mplus-leaderboard` (`src/pve/mplus-leaderboard/`) returns Mythic+ characters by
+`mythicScore`, best first, one page at a time.
+
+- **Parameters** (all optional):
+  - `region`: `world` (default), `us`, `eu`, `kr`, `tw` or `cn`. Raider.io covers China,
+    unlike the PvP ladders.
+  - `season`: a slug or `current` (default).
+  - `class`, `spec`, `role`.
+  - `page` and `pageSize`: the same paging as `/pvp/leaderboard` (default 50, max 100, rows
+    up to 200,000).
+- **Season.** `current` is the region's live season from `mplus_season_state`. On `world`
+  it is the newest season any region is on (catalogue order).
+  - That season reads `mplus_characters`. Any other reads `mplus_archive_characters`, and
+    `current: false` says so. The archive keeps only the top of each region (~4,750
+    characters for season-mn-1).
+  - A slug the catalogue does not know is a **404**.
+- **Filters** match the stored profile by Blizzard id: `profile.classId` (`CLASS_IDS`) and
+  `profile.specId` (`SPEC_IDS`, both in `src/pvp/specs.ts`, checked against every spec in
+  the data), and `profile.role` (`tank`, `healer`, `dps`).
+  - The slugs are the PvP endpoints'; the stored names (`Death Knight`, `Beast Mastery`)
+    are never matched.
+  - `spec` needs `class`, and must be one of its specs. `spec` and `role` never come
+    together. Each of these is a **400**.
+- **Reads** are hinted by name to Rankwarden's board index for the filter
+  (`MplusBoardIndexes` in `src/database/collections.ts`, live and archive, world and
+  region), so a page is an index walk in score order. The count uses the same hint.
+  - The board is chosen in this order: the spec board with a spec; else the class board
+    with a class (a `role` beside it is checked on the documents); else the role board;
+    else the score board.
+  - The live collection has no score board without region. On `world`,
+    `region: { $in: [all five] }` lets `mplus_score_board`'s per-region ranges merge in
+    order (`SORT_MERGE`) instead of an in-memory sort.
+  - On the 269,722-character season, every page reads about one page of documents:
+    unfiltered `world` p1 takes 6 ms (count 27 ms), and Fire mage on `world` takes 2 ms.
+- **Coverage.** Every character is listed, and each entry carries `isFullyCovered`. The
+  board is not filtered on it: the front end flags characters whose runs miss a dungeon
+  of the season, whose `mythicScore` is therefore a partial sum.
+  - About 36% of live characters are covered, and about 8% of the archive. The top of the
+    board is covered; uncovered characters appear lower down (a Fire mage at #67, 7 of 8
+    dungeons).
+  - Rankwarden also has `*_covered_board` indexes, for a covered-only board if one is
+    ever wanted. They are not used.
+- **Shape.** `{ region, season, current, class, spec, role, page, pageSize, total,
+  totalPages, entries }`.
+  - Each entry has `rank` (its place on the filtered board), then `characterName`,
+    `realmName`, `realmSlug`, `region`, `faction`, `mythicScore`, `previousMythicScore`,
+    `isFullyCovered`, the stored `profile`, and
+    `dungeonRuns` as stored (with `completedAt` as an ISO string).
+  - Dungeons are not enriched from `mplus_dungeons`: the front end reads them separately.
+- **`previousMythicScore`** is the `mythicScore` before Rankwarden's latest write: equal
+  when the character gained nothing, lower when they climbed. It lets the front end show
+  movement.
+  - It is null on a character's first write, and always on archived seasons (written
+    once). A document written before Rankwarden recorded it also answers null.
+  - Only this endpoint carries it. The other PvE endpoints that return characters have no
+    stored score: search suggestions and the run rosters have none, and `/pve/character`
+    shows Raider.io's own score, which Rankwarden's previous score does not describe.
+- **Ties.** Many characters share a score (several at 4265.1 at the top). The order among
+  equal scores is the index's, stable from page to page.
+- **Cache.** Pages are cached in Redis for `MPLUS_LEADERBOARD_CACHE_TTL_SECONDS` (5 min).
+
+### PvE raid board
+
+`GET /pve/raid?raidSlug=&region=&difficulty=` (`src/pve/raid/`) returns one raid and its
+top hundred guilds, from the `guilds` boards on Rankwarden's `raids` documents.
+
+- **Parameters.** `raidSlug` is required: a catalogue raid, or `current` (as on
+  `/pve/bosses`). `region` defaults to `world` (or `us`, `eu`, `kr`, `tw`). `difficulty`
+  defaults to `mythic`. There is no fallback to an easier difficulty.
+- **Shape.**
+  - `{ region, difficulty, raid, updatedAt, guilds }`. `raid` is `{ slug, name, icon,
+    encounters }` from the catalogue.
+  - `updatedAt` is when Rankwarden last read the board (`guildsUpdatedAt`).
+  - Each of `guilds` keeps everything stored (`rank`, `regionRank`, `encountersPulled`,
+    `encountersDefeated`, with dates as ISO strings), with `guildId` replaced by the
+    `guild` object that `/pve/bosses` also uses.
+- **Reads.** A `findOne` by `slug` (`raid_slug`), projected to the one board and its
+  timestamp, so the other boards (~180 KB each) are never read. Then the board's guilds
+  through `GuildRefs`.
+- **Size.** ~220 KB before compression for 100 guilds with every pull and kill; ~40 ms
+  uncached. Cached in Redis per region, raid and difficulty for
+  `RAID_BOARD_CACHE_TTL_SECONDS` (10 min).
+- A board Rankwarden has never read is a 200 with `guilds: []` and `updatedAt: null`.
+  Old raids have empty `encountersPulled`, and The Emerald Nightmare's world board holds
+  97 guilds, not 100.
+- **404** for a raid the catalogue lacks.
+
+`GuildRefs` (`src/pve/shared/guild-refs.service.ts`) is the guild join both boards use. It
+reads the guilds of a board in one `$in` on `guilds` (`guild_identity`) and answers
+`{ id, name, faction, logo, realm, realmSlug, region }`. An id not stored keeps its `id`,
+with its other fields null.
+
+### PvE bosses
+
+`GET /pve/bosses` (`src/pve/bosses/`) returns the first guilds to kill each boss of a raid,
+from Rankwarden's `bosses` collection. That collection holds one document per raid
+encounter, with its boards (`bossRankings.<board>.<difficulty>`, the first 50 guilds).
+
+- **Parameters** (all optional):
+  - `region`: `world` (default), `us`, `eu`, `kr` or `tw`.
+  - `raidSlug`: a catalogue raid, or `current` (default).
+  - `bossSlug`: one boss of that raid.
+  - `difficulty`: `mythic`, `heroic` or `normal`.
+  - `top`: 1–50, default 50.
+- **`current`** is `PveCatalogue.currentRaid()`: of the newest expansion's raids still
+  open in some region, the one with the most bosses. Midnight has three open (The
+  Venomous Abyss with 8 bosses, and two 1-boss raids beside it), so this picks the tier's
+  main raid. When none is open (between tiers), all of the newest expansion's raids are
+  taken. A tie goes to the newer raid.
+- **Order.** The bosses come in the raid's `encounters` order from the catalogue, not
+  Mongo's order. A boss is matched by encounter `id`, then by `slug`. A boss the catalogue
+  lists but `bosses` lacks still appears, with `difficulty: null` and no rankings.
+- **Difficulty is one for the whole answer**, at the top level next to `region`. A list
+  must not mix mythic and heroic bosses.
+  - Without one asked for, it is the first of mythic, heroic, normal on which any of the
+    requested bosses has guilds on the region's board. Every boss is answered at it, so a
+    boss nobody has killed there has an empty `bossRankings`, not an easier board.
+  - Blackrock Depths has no mythic board at all, so it answers `heroic`.
+  - A difficulty asked for is used even when every board is empty. `difficulty` is null
+    only when no board of any difficulty has guilds.
+- **Reads.** The raid's bosses are read by `{ raidSlug, slug: { $in } }` through
+  `boss_raid_slug_name`, never by slug alone: a re-release's boss can share a slug with
+  the original's. The projection keeps only `bossRankings.<region>.<difficulty>`. Then
+  every guild on the chosen boards is read in one `$in` on `guilds` (`guild_identity`).
+- **Shape.** `{ region, difficulty, bosses }`. Each boss has `bossName` and `bossSlug`; a
+  `raid` object (`slug`, `name`, `icon`, `expansionId`); and `bossRankings`. Each ranking has `rank`,
+  `itemLevelAvg`, `attempts` and `firstDefeated`, plus a `guild` object (`id`, `name`,
+  `faction`, `logo`, `realm`, `realmSlug`, `region`).
+  - `firstDefeated` and `attempts` are null for a guild ranked for progress without a
+    kill. `attempts` is often null or 0, as Raider.io sends it.
+  - A guild missing from `guilds` keeps its `id`, with its other fields null.
+- **Cache.** Whole boards are cached in Redis per region, raid, boss and difficulty for
+  `BOSSES_CACHE_TTL_SECONDS` (10 min). `top` slices the cached answer.
+  - The current raid with every boss is ~113 KB before compression and takes ~50 ms
+    uncached.
+- **404** for a raid the catalogue lacks, or a boss the raid does not have.
 
 ## 8. Rankwarden sync
 

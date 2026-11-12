@@ -1,4 +1,4 @@
-import type { Region } from '../../blizzard/blizzard.constants.js';
+import type { PvpBoard } from '../world.js';
 
 export type Tier = 'S' | 'A' | 'B' | 'C' | 'D';
 
@@ -34,7 +34,8 @@ export interface TierListSpec {
 }
 
 export interface TierListResponse {
-  region: Region;
+  /** A region, or `world`: every region's ladder together. */
+  region: PvpBoard;
   bracket: string;
   seasonId: number;
   seasonName: string | null;

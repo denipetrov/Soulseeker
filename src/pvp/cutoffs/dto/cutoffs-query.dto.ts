@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { REGIONS } from '../../../blizzard/blizzard.constants.js';
 import { CLASSES } from '../../leaderboard/dto/leaderboard-query.dto.js';
+import { pvpBoardSchema } from '../../world.js';
 
 /**
  * The ladders that award a title. 2v2 awards none, so it has no cutoff to
@@ -20,12 +20,7 @@ export type CutoffBracket = (typeof CUTOFF_BRACKETS)[number];
  */
 export const cutoffsQuerySchema = z
   .object({
-    region: z
-      .string()
-      .trim()
-      .toLowerCase()
-      .pipe(z.enum(REGIONS))
-      .meta({ description: 'Blizzard region.', enum: [...REGIONS], example: 'eu' }),
+    region: pvpBoardSchema,
     bracket: z
       .string()
       .trim()

@@ -1,16 +1,20 @@
 import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { SpecShare } from '../entities/spec-representation.entity.js';
+import type { PvpBoard } from '../world.js';
 
 export interface RepresentationResponse {
-  region: Region;
+  /** A region, or `world`: every region's snapshots of the day, added up. */
+  region: PvpBoard;
   bracket: string;
   rating: number;
+  /** The regions whose snapshots the answer is: on `world`, those with one that day. */
+  regions: Region[];
   /**
    * The day answered, `YYYY-MM-DD`: the day asked for, or with `date=latest`
    * the day of the newest snapshot stored.
    */
   date: string;
-  /** When Rankwarden computed the snapshot. */
+  /** When Rankwarden computed the snapshot; on `world`, the latest of the day's regions. */
   computedAt: string;
   /** Rows at or above the rating. */
   total: number;
@@ -30,6 +34,8 @@ export interface RepresentationResponse {
 export interface RepresentationDay {
   /** `YYYY-MM-DD`, UTC. */
   date: string;
+  /** The regions whose snapshots the day is: on `world`, those with one that day. */
+  regions: Region[];
   computedAt: string;
   total: number;
   /** 0 on a 2v2, 3v3 or RBG day before Rankwarden enriched the ladder; `specs` is then empty. */
@@ -50,7 +56,8 @@ export interface RepresentationDay {
  * `days[0].date` is where the data begins.
  */
 export interface RepresentationHistoryResponse {
-  region: Region;
+  /** A region, or `world`: each day its regions' snapshots added up. */
+  region: PvpBoard;
   bracket: string;
   rating: number;
   /** The window asked about, `YYYY-MM-DD`, inclusive: the axis to draw. */

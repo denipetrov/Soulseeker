@@ -9,17 +9,24 @@ import { RunLogger, withRunId } from '@denipetrov/spirit-link/logging';
 
 import { DEFAULT_LOCALE, isRegion } from '../../blizzard/blizzard.constants.js';
 import { ProfileApi } from '../../blizzard/profile.api.js';
+import {
+  mplusCharacterKey,
+  type MplusCharacterDocument,
+} from '../../characters/entities/mplus-character.entity.js';
 import { RunKind } from '../../common/logging/run-kind.js';
 import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { budgetErrorOf } from '../../common/quota/request-budget.js';
 import { describeError } from '../../common/utils/errors.js';
 import { SingleFlight } from '../../common/utils/single-flight.js';
 import type { Env } from '../../config/env.schema.js';
+import { Collections } from '../../database/collections.js';
+import { MongoService } from '../../database/mongo.service.js';
 import { RaiderIoCharacterApi } from '../../raiderio/character.api.js';
 import type { RaiderIoCharacterPayload } from '../../raiderio/schemas/character-profile.schema.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
+import { CurrentSeasons } from '../../seasons/current-seasons.service.js';
 import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import {
   bossesPartOf,
@@ -60,7 +67,9 @@ type PartName = keyof AnswerParts;
  * Blizzard fails, the kept copy or null is served and the page still answers.
  *
  * Every time the whole page is fetched fresh, the current season's best runs
- * are pushed to Rankwarden once the response has gone.
+ * are pushed to Rankwarden once the response has gone. Alongside that fetch,
+ * the score Rankwarden held until then is read from `mplus_characters`, and
+ * answered as `previousMythicScore`.
  */
 @Injectable()
 export class PveCharacterService {
@@ -78,6 +87,8 @@ export class PveCharacterService {
     private readonly cache: CacheService,
     private readonly cooldown: RefreshCooldown,
     private readonly sync: RankwardenSyncClient,
+    private readonly mongo: MongoService,
+    private readonly currentSeasons: CurrentSeasons,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVE_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -143,6 +154,9 @@ export class PveCharacterService {
           : seasonFields(query.mplusSeasonScore!),
     );
 
+    // Before the push this fetch leads to, in parallel with Raider.io.
+    const stored = missing.includes('full') ? this.storedScore(query) : null;
+
     let payload: RaiderIoCharacterPayload | null;
     const fetchedAt = new Date();
     try {
@@ -156,7 +170,9 @@ export class PveCharacterService {
     if (!payload) throw new NotFoundException('No such character');
 
     const fresh: AnswerParts = {};
-    if (missing.includes('full')) fresh.full = fullPartOf(payload, fetchedAt);
+    if (missing.includes('full')) {
+      fresh.full = fullPartOf(payload, fetchedAt, previousScoreOf(await stored, payload));
+    }
     if (missing.includes('raid')) {
       fresh.raid = raidPartOf(payload, query.raidProgression!, fetchedAt);
     }
@@ -176,6 +192,36 @@ export class PveCharacterService {
       await extras(),
       false,
     );
+  }
+
+  /**
+   * The character's score in Rankwarden for the region's current season, as it
+   * stands before this page's push. Never fails the page: on an error, null.
+   */
+  private async storedScore(
+    query: PveCharacterQuery,
+  ): Promise<{ season: string; score: number } | null> {
+    try {
+      const season = (await this.currentSeasons.mplusSeasons()).find(
+        (state) => state.region === query.region,
+      )?.season;
+      if (!season) return null;
+
+      const doc = await this.mongo
+        .collection<MplusCharacterDocument>(Collections.MplusCharacters)
+        .findOne(
+          { season, key: mplusCharacterKey(query.region, query.realmSlug, query.characterName) },
+          { projection: { _id: 0, mythicScore: 1 } },
+        );
+
+      return doc ? { season, score: doc.mythicScore } : null;
+    } catch (error) {
+      this.logger.warn(
+        `Stored score of ${query.region}/${query.realmSlug}/${query.characterName} not read: ` +
+          describeError(error),
+      );
+      return null;
+    }
   }
 
   private isFresh(part: { fetchedAt: string } | undefined | null): boolean {
@@ -297,4 +343,18 @@ export class PveCharacterService {
       });
     });
   }
+}
+
+/**
+ * The stored score, if it is for the season Raider.io now calls current: across
+ * a rollover the two would be different seasons, and no comparison.
+ */
+function previousScoreOf(
+  stored: { season: string; score: number } | null,
+  payload: RaiderIoCharacterPayload,
+): number | null {
+  // `:current:previous` lists the current season first.
+  const current = payload.mythic_plus_scores_by_season?.[0]?.season;
+
+  return stored && stored.season === current ? stored.score : null;
 }

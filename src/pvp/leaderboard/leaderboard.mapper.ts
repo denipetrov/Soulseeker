@@ -76,7 +76,7 @@ const lower = (value: string | null | undefined): string | null =>
 
 /** A live ratings row, enriched with what `characters` holds of its character. */
 export function currentEntry(
-  row: Pick<RatingRow, 'characterId' | 'bracket' | 'rating' | 'class' | 'spec'>,
+  row: Pick<RatingRow, 'region' | 'characterId' | 'bracket' | 'rating' | 'class' | 'spec'>,
   character: BoardCharacter | undefined,
   season: PvpSeason | null,
 ): LeaderboardEntry {
@@ -91,6 +91,7 @@ export function currentEntry(
   const spec = row.spec ?? (perSpec ? null : slugOf(profile?.spec?.name));
 
   return {
+    region: row.region,
     characterId: row.characterId,
     characterName: character?.characterName ?? null,
     realmSlug: character?.realmSlug ?? null,
@@ -118,6 +119,7 @@ export function archivedEntry(entry: ArchiveEntry, season: PvpSeason | null): Le
   const faction = lower(entry.faction);
 
   return {
+    region: entry.region,
     characterId: entry.characterId,
     characterName: entry.characterName ?? null,
     realmSlug: entry.realmSlug ?? null,

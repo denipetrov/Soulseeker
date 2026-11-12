@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Filter } from 'mongodb';
 
 import type { RatingRow } from '../../characters/entities/character.entity.js';
 import type { Env } from '../../config/env.schema.js';
@@ -8,6 +9,7 @@ import { MongoService } from '../../database/mongo.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import type { PvpSeason } from '../seasons/pvp-season.types.js';
+import { regionsOf, type PvpBoard } from '../world.js';
 import { ALL_SPECS } from '../specs.js';
 import type { TierListQuery } from './dto/tier-list-query.dto.js';
 import {
@@ -43,6 +45,10 @@ const LISTED = new Set(ALL_SPECS.map((entry) => `${entry.class}-${entry.spec}`))
  * has and the list does not (one Blizzard just added) is scored too, and
  * logged, so `src/pvp/specs.ts` can be brought up to date.
  *
+ * On `world` both reads cover every region on the current season
+ * (`region: $in`): the top 5,000 of all of them, merged in rating order, and
+ * every row at or above 1500 of all of them.
+ *
  * On 2v2, 3v3 and RBG a row has a spec only once Rankwarden has enriched its
  * character; rows without one hold their place in the top but count for no
  * spec. The list is cached for `TIER_LIST_CACHE_TTL_SECONDS`.
@@ -62,7 +68,8 @@ export class TierListService {
   }
 
   async tierList(query: TierListQuery): Promise<TierListResponse> {
-    const season = await this.seasons.currentSeason(query.region);
+    const seasons = await this.currentSeasons(query.region);
+    const season = seasons[0];
     if (!season) {
       throw new NotFoundException({
         message: `No current PvP season recorded for ${query.region}`,
@@ -74,7 +81,7 @@ export class TierListService {
     // as Rankwarden enriches it.
     const list = await this.cache.getOrLoad(
       key,
-      () => this.compute(query, season),
+      () => this.compute(query, seasons),
       this.cacheTtlSeconds,
     );
 
@@ -87,9 +94,31 @@ export class TierListService {
     return list;
   }
 
-  private async compute(query: TierListQuery, season: PvpSeason): Promise<TierListResponse | null> {
+  /**
+   * The current season of each region the list covers. On `world`, the regions
+   * on the newest season: at a rollover the others' ladders are another season.
+   */
+  private async currentSeasons(board: PvpBoard): Promise<PvpSeason[]> {
+    const found = (
+      await Promise.all(regionsOf(board).map((region) => this.seasons.currentSeason(region)))
+    ).filter((season): season is PvpSeason => season !== null);
+    const newest = Math.max(...found.map((season) => season.seasonId));
+
+    return found.filter((season) => season.seasonId === newest);
+  }
+
+  private async compute(
+    query: TierListQuery,
+    seasons: PvpSeason[],
+  ): Promise<TierListResponse | null> {
+    const season = seasons[0]!;
     const ratings = this.mongo.collection<RatingRow>(RATING_COLLECTIONS[query.bracket]);
-    const scope = { seasonId: season.seasonId, region: season.region };
+    // On `world`, `$in` the regions: `board_order` (season, region, rating)
+    // merges their ranges in rating order for the top rows.
+    const scope: Filter<RatingRow> = {
+      seasonId: season.seasonId,
+      region: seasons.length === 1 ? season.region : { $in: seasons.map((entry) => entry.region) },
+    };
 
     const [top, grouped] = await Promise.all([
       ratings

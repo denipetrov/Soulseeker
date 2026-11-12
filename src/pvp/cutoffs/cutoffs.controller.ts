@@ -36,6 +36,7 @@ const CHARACTERS_EXAMPLE: CutoffCharactersResponse = {
   total: 1,
   characters: [
     {
+      region: 'us',
       characterId: 241802571,
       characterName: 'Noobwar',
       realmSlug: 'burning-blade',

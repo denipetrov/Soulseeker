@@ -1,11 +1,11 @@
-import { Injectable, type OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RunLogger } from '@denipetrov/spirit-link/logging';
 
-import { describeError } from '../common/utils/errors.js';
 import type { Env } from '../config/env.schema.js';
 import { Collections } from '../database/collections.js';
 import { MongoService } from '../database/mongo.service.js';
+import { CacheService } from '../redis/cache.service.js';
 
 export interface RaidEncounter {
   id: number;
@@ -17,8 +17,23 @@ export interface RaidEncounter {
 export interface CatalogueRaid {
   slug: string;
   name: string;
+  /** `NP`; null where Raider.io gives none. */
+  shortName: string | null;
   /** Raider.io's expansion id: 10 = The War Within, 11 = Midnight. */
   expansionId: number;
+  /**
+   * As Raider.io names it: an icon name (`inv_1215_raid_achievement_kithix`) or,
+   * on some raids, a numeric file id (`8039569`). Null on every raid before
+   * Battle for Azeroth.
+   */
+  icon: string | null;
+  /** When the raid opened, per region (`us`, `eu`, `tw`, `kr`, `cn`), ISO 8601. */
+  starts: Partial<Record<string, string>>;
+  /**
+   * When it closed, per region; null while it is still open (Raider.io's
+   * `2030-01-01` placeholder).
+   */
+  ends: Partial<Record<string, string | null>>;
   encounters: RaidEncounter[];
 }
 
@@ -42,18 +57,32 @@ export interface CatalogueMplusSeason {
   cutoffs: Partial<Record<string, TopPercentCutoffs>>;
 }
 
-export interface PveCatalogueSnapshot {
-  /** Newest first. */
-  raids: CatalogueRaid[];
-  /** Newest first. */
-  mplusSeasons: CatalogueMplusSeason[];
-  loadedAt: string;
+/** The catalogue's keys in Redis, under the cache prefix: one value each, for every replica. */
+export const RAIDS_CACHE_KEY = 'pve:raids';
+export const MPLUS_SEASONS_CACHE_KEY = 'pve:mplus-seasons';
+
+interface RaidDocument extends Omit<CatalogueRaid, 'shortName' | 'icon' | 'starts' | 'ends'> {
+  shortName?: string | null;
+  icon?: string | null;
+  starts?: Record<string, Date>;
+  ends?: Record<string, Date>;
 }
 
-interface RaidDocument extends CatalogueRaid {
-  expansionId: number;
-  starts?: Record<string, Date>;
-}
+/** The end Raider.io gives a raid still open, until the real one is known. */
+const OPEN_END = Date.UTC(2030, 0, 1);
+
+export const isoDates = (dates: Record<string, Date> | undefined): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(dates ?? {}).map(([region, date]) => [region, new Date(date).toISOString()]),
+  );
+
+export const endDates = (dates: Record<string, Date> | undefined): Record<string, string | null> =>
+  Object.fromEntries(
+    Object.entries(dates ?? {}).map(([region, date]) => {
+      const time = new Date(date).getTime();
+      return [region, time === OPEN_END ? null : new Date(time).toISOString()];
+    }),
+  );
 
 /** A quantile cutoff in `mplus_seasons.cutoffs.<region>.quantiles`; `all` is both factions. */
 interface QuantileCutoff {
@@ -76,75 +105,55 @@ function firstStart(starts: Record<string, Date> | undefined): number {
 }
 
 /** Newest expansion first, then the latest to open within it. */
-const newestFirst = (
+export const newestFirst = (
   a: { expansionId: number; starts?: Record<string, Date> },
   b: { expansionId: number; starts?: Record<string, Date> },
 ) => b.expansionId - a.expansionId || firstStart(b.starts) - firstStart(a.starts);
 
 /**
  * Every raid and Mythic+ season Rankwarden catalogues, from `raids` and
- * `mplus_seasons`, held in memory.
+ * `mplus_seasons`. Both are a few dozen small documents that change about once
+ * a day.
  *
- * Both are a few dozen small documents that change about once a day, so they
- * are read at startup and again once `PVE_CATALOGUE_TTL_SECONDS` (a day) has
- * passed, on the next call. A failed read keeps the previous catalogue and is
- * retried on the next call; only a replica that has never read one fails.
+ * Each list is one value in Redis (`RAIDS_CACHE_KEY`, `MPLUS_SEASONS_CACHE_KEY`),
+ * so every replica serves the same catalogue. Filled on demand: the first call
+ * that finds a key missing reads Mongo and stores the list for
+ * `PVE_CATALOGUE_TTL_SECONDS` (a day). Concurrent misses on one replica share
+ * that read. If Redis is away, each call reads Mongo instead; if Mongo fails
+ * too, the call fails.
  *
- * Only what character lookups need is kept: slugs, names, expansions, a raid's
- * bosses, a season's dungeon ids and its top 0.1% / 1% scores. Raid rankings,
- * keystone-title cutoffs and archive progress — most of the documents' size —
- * are never read.
+ * Only what the lookups and `GET /pve/raids` need is kept: slugs, names,
+ * expansions, a raid's bosses, icon and regional dates, a season's dungeon ids
+ * and its top 0.1% / 1% scores. Raid rankings, keystone-title cutoffs and
+ * archive progress — most of the documents' size — are never read.
  */
 @Injectable()
-export class PveCatalogue implements OnApplicationBootstrap {
+export class PveCatalogue {
   private readonly logger = new RunLogger(PveCatalogue.name);
-  private readonly ttlMs: number;
-  private snapshot: PveCatalogueSnapshot | null = null;
-  private loadedAtMs = 0;
-  /** One reload at a time on this replica. */
-  private loading: Promise<PveCatalogueSnapshot> | null = null;
+  private readonly ttlSeconds: number;
 
   constructor(
     private readonly mongo: MongoService,
+    private readonly cache: CacheService,
     config: ConfigService<Env, true>,
   ) {
-    this.ttlMs = config.get('PVE_CATALOGUE_TTL_SECONDS', { infer: true }) * 1000;
+    this.ttlSeconds = config.get('PVE_CATALOGUE_TTL_SECONDS', { infer: true });
   }
 
-  /** Loads at startup so the first lookup does not pay for it; a failure here is retried later. */
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.catalogue();
-    } catch (error) {
-      this.logger.error(`PvE catalogue not loaded at startup: ${describeError(error)}`);
-    }
-  }
-
-  async catalogue(): Promise<PveCatalogueSnapshot> {
-    if (this.snapshot && Date.now() - this.loadedAtMs < this.ttlMs) return this.snapshot;
-
-    this.loading ??= this.load()
-      .catch((error: unknown) => {
-        if (!this.snapshot) throw error;
-
-        this.logger.warn(
-          `PvE catalogue reload failed, keeping the last one: ${describeError(error)}`,
-        );
-        return this.snapshot;
-      })
-      .finally(() => {
-        this.loading = null;
-      });
-
-    return this.loading;
-  }
-
+  /** Newest expansion first, then the latest to open within it. */
   async raids(): Promise<CatalogueRaid[]> {
-    return (await this.catalogue()).raids;
+    // Never null: the loader returns a list, empty at worst, or throws.
+    return (await this.cache.getOrLoad(RAIDS_CACHE_KEY, () => this.loadRaids(), this.ttlSeconds))!;
   }
 
+  /** Newest expansion first, then the latest to open within it. */
   async mplusSeasons(): Promise<CatalogueMplusSeason[]> {
-    return (await this.catalogue()).mplusSeasons;
+    // Never null, as with the raids.
+    return (await this.cache.getOrLoad(
+      MPLUS_SEASONS_CACHE_KEY,
+      () => this.loadSeasons(),
+      this.ttlSeconds,
+    ))!;
   }
 
   async raidSlugs(): Promise<string[]> {
@@ -167,79 +176,105 @@ export class PveCatalogue implements OnApplicationBootstrap {
     return raids.filter((raid) => raid.expansionId === newest);
   }
 
+  /**
+   * The raid in progress: of the newest expansion's raids still open in some
+   * region, the one with the most bosses — the tier's main raid, not a
+   * one-boss raid that opened beside it. Between tiers, when none is open, the
+   * newest expansion's raids are taken instead. A tie goes to the newer raid.
+   * Null only with an empty catalogue.
+   */
+  async currentRaid(): Promise<CatalogueRaid | null> {
+    const raids = await this.currentExpansionRaids();
+    const open = raids.filter((raid) => Object.values(raid.ends).some((end) => end === null));
+    const candidates = open.length > 0 ? open : raids;
+
+    // Newest first already, so the first of the most bosses is the newer.
+    return candidates.reduce<CatalogueRaid | null>(
+      (best, raid) => (!best || raid.encounters.length > best.encounters.length ? raid : best),
+      null,
+    );
+  }
+
   async mplusSeason(slug: string): Promise<CatalogueMplusSeason | null> {
     return (await this.mplusSeasons()).find((season) => season.slug === slug) ?? null;
   }
 
-  private async load(): Promise<PveCatalogueSnapshot> {
-    const [raids, seasons] = await Promise.all([
-      this.mongo
-        .collection<RaidDocument>(Collections.Raids)
-        .find(
-          {},
-          {
-            projection: { _id: 0, slug: 1, name: 1, encounters: 1, expansionId: 1, starts: 1 },
+  private async loadRaids(): Promise<CatalogueRaid[]> {
+    const raids = await this.mongo
+      .collection<RaidDocument>(Collections.Raids)
+      .find(
+        {},
+        {
+          projection: {
+            _id: 0,
+            slug: 1,
+            name: 1,
+            shortName: 1,
+            icon: 1,
+            encounters: 1,
+            expansionId: 1,
+            starts: 1,
+            ends: 1,
           },
-        )
-        .toArray(),
-      this.mongo
-        .collection<MplusSeasonDocument>(Collections.MplusSeasons)
-        .find(
-          {},
-          {
-            // The quantile cutoffs only: the keystone-title ones and fetch bookkeeping
-            // next to them are not needed.
-            projection: {
-              _id: 0,
-              slug: 1,
-              name: 1,
-              dungeonIds: 1,
-              expansionId: 1,
-              starts: 1,
-              'cutoffs.us.quantiles': 1,
-              'cutoffs.eu.quantiles': 1,
-              'cutoffs.kr.quantiles': 1,
-              'cutoffs.tw.quantiles': 1,
-              'cutoffs.cn.quantiles': 1,
-            },
+        },
+      )
+      .toArray();
+
+    this.logger.log(`Raids read: ${raids.length}, cached for ${this.ttlSeconds}s`);
+
+    return raids.sort(newestFirst).map((raid) => ({
+      slug: raid.slug,
+      name: raid.name,
+      shortName: raid.shortName ?? null,
+      expansionId: raid.expansionId,
+      icon: raid.icon ?? null,
+      starts: isoDates(raid.starts),
+      ends: endDates(raid.ends),
+      encounters: (raid.encounters ?? []).map(({ id, slug, name }) => ({ id, slug, name })),
+    }));
+  }
+
+  private async loadSeasons(): Promise<CatalogueMplusSeason[]> {
+    const seasons = await this.mongo
+      .collection<MplusSeasonDocument>(Collections.MplusSeasons)
+      .find(
+        {},
+        {
+          // The quantile cutoffs only: the keystone-title ones and fetch bookkeeping
+          // next to them are not needed.
+          projection: {
+            _id: 0,
+            slug: 1,
+            name: 1,
+            dungeonIds: 1,
+            expansionId: 1,
+            starts: 1,
+            'cutoffs.us.quantiles': 1,
+            'cutoffs.eu.quantiles': 1,
+            'cutoffs.kr.quantiles': 1,
+            'cutoffs.tw.quantiles': 1,
+            'cutoffs.cn.quantiles': 1,
           },
-        )
-        .toArray(),
-    ]);
+        },
+      )
+      .toArray();
 
-    const loadedAt = new Date();
-    const snapshot: PveCatalogueSnapshot = {
-      raids: raids.sort(newestFirst).map((raid) => ({
-        slug: raid.slug,
-        name: raid.name,
-        expansionId: raid.expansionId,
-        encounters: (raid.encounters ?? []).map(({ id, slug, name }) => ({ id, slug, name })),
-      })),
-      mplusSeasons: seasons.sort(newestFirst).map((season) => ({
-        slug: season.slug,
-        name: season.name,
-        dungeonIds: season.dungeonIds ?? [],
-        expansionId: season.expansionId,
-        cutoffs: Object.fromEntries(
-          Object.entries(season.cutoffs ?? {}).map(([region, cutoff]) => [
-            region,
-            {
-              p999: minScoreOf(cutoff.quantiles?.p999),
-              p990: minScoreOf(cutoff.quantiles?.p990),
-            },
-          ]),
-        ),
-      })),
-      loadedAt: loadedAt.toISOString(),
-    };
+    this.logger.log(`Mythic+ seasons read: ${seasons.length}, cached for ${this.ttlSeconds}s`);
 
-    this.snapshot = snapshot;
-    this.loadedAtMs = loadedAt.getTime();
-    this.logger.log(
-      `PvE catalogue loaded: ${snapshot.raids.length} raids, ` +
-        `${snapshot.mplusSeasons.length} Mythic+ seasons, for ${this.ttlMs / 1000}s`,
-    );
-
-    return snapshot;
+    return seasons.sort(newestFirst).map((season) => ({
+      slug: season.slug,
+      name: season.name,
+      dungeonIds: season.dungeonIds ?? [],
+      expansionId: season.expansionId,
+      cutoffs: Object.fromEntries(
+        Object.entries(season.cutoffs ?? {}).map(([region, cutoff]) => [
+          region,
+          {
+            p999: minScoreOf(cutoff.quantiles?.p999),
+            p990: minScoreOf(cutoff.quantiles?.p990),
+          },
+        ]),
+      ),
+    }));
   }
 }

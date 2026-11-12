@@ -246,6 +246,7 @@ describe('GET /pvp/cutoffs with class and spec', () => {
 
     expect(listed).toEqual(board.entries[0]);
     expect(listed).toEqual({
+      region: 'eu',
       characterId: 201,
       characterName: 'Biba',
       realmSlug: 'kazzak',

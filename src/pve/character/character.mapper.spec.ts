@@ -136,6 +136,10 @@ const RAIDS: CatalogueRaid[] = [
     slug: 'tier-mn-1',
     name: 'Tier MN 1',
     expansionId: 11,
+    shortName: null,
+    icon: null,
+    starts: {},
+    ends: {},
     encounters: [
       { id: 3176, slug: 'imperator-averzian', name: 'Imperator Averzian' },
       { id: 3177, slug: 'vorasius', name: 'Vorasius' },
@@ -409,6 +413,10 @@ describe('raid bosses', () => {
         slug: 'nerubar-palace',
         name: 'Nerub-ar Palace',
         expansionId: 10,
+        shortName: null,
+        icon: null,
+        starts: {},
+        ends: {},
         encounters: [
           { id: 1, slug: 'sikran', name: 'Sikran' },
           { id: 2, slug: 'one-armed-bandit', name: 'One-Armed Bandit' },

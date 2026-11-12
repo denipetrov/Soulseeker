@@ -1,8 +1,8 @@
 import { REPRESENTATION_MIN_RATINGS } from '@denipetrov/spirit-link/constants';
 import { z } from 'zod';
 
-import { REGIONS } from '../../../blizzard/blizzard.constants.js';
 import { CORE_BRACKETS, SPEC_FAMILIES } from '../../seasons/pvp-season.types.js';
+import { pvpBoardSchema } from '../../world.js';
 
 const FAMILIES = [...CORE_BRACKETS, ...SPEC_FAMILIES] as const;
 
@@ -18,12 +18,7 @@ export const LATEST = 'latest';
  * day, or `latest`.
  */
 export const representationQuerySchema = z.object({
-  region: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .pipe(z.enum(REGIONS))
-    .meta({ description: 'Blizzard region.', enum: [...REGIONS], example: 'eu' }),
+  region: pvpBoardSchema,
   bracket: z
     .string()
     .trim()

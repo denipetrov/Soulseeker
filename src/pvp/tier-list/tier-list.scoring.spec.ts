@@ -44,6 +44,10 @@ describe('adjustedAverage', () => {
     expect(adjustedAverage(1000, 1800)).toBeCloseTo(1785.7, 1);
     expect(adjustedAverage(5, 1800)).toBeCloseTo(1527.3, 1);
   });
+
+  it('pulls toward the floor given: 2000 on Mythic+', () => {
+    expect(adjustedAverage(50, 3800, 2000)).toBe(2900);
+  });
 });
 
 describe('assignTiers', () => {

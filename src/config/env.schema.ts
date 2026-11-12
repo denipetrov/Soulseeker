@@ -289,6 +289,8 @@ export const envSchema = z.object({
   RAIDERIO_PATH_CHARACTER_PROFILE: pathTemplate('characters/profile'),
   RAIDERIO_PATH_GUILD_PROFILE: pathTemplate('guilds/profile'),
   RAIDERIO_PATH_GUILD_BOSS_KILL: pathTemplate('guilds/boss-kill'),
+  RAIDERIO_PATH_MPLUS_RUN_DETAILS: pathTemplate('mythic-plus/run-details'),
+  RAIDERIO_PATH_MPLUS_CUTOFF_ANALYSIS: pathTemplate('mythic-plus/cutoff-analysis/summary'),
   RAIDERIO_REQUEST_TIMEOUT_MS: positiveInt(10_000),
   RAIDERIO_RETRY_LIMIT: nonNegativeInt(1),
   RAIDERIO_MINUTE_LIMIT: positiveInt(1_000),
@@ -363,6 +365,8 @@ export const envSchema = z.object({
    * ladder, and a spec's place moves over days, not within the hour.
    */
   TIER_LIST_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /** How long one hero talent breakdown (region, bracket, top) is reused. */
+  HERO_TALENTS_CACHE_TTL_SECONDS: positiveInt(900),
   /**
    * How long a PvP character page is served without asking Blizzard again. One
    * page costs about 13 Blizzard requests, so this is long on purpose.
@@ -387,6 +391,29 @@ export const envSchema = z.object({
    * Raider.io again. The full roster is never cached.
    */
   GUILD_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /**
+   * How long one boss board answer is reused. Rankwarden's rankings job rewrites
+   * the boards a few times a day, and a first kill matters most while it is new.
+   */
+  BOSSES_CACHE_TTL_SECONDS: positiveInt(600),
+  /** How long one raid board (top hundred guilds of a region and difficulty) is reused. */
+  RAID_BOARD_CACHE_TTL_SECONDS: positiveInt(600),
+  /** How long one Mythic+ leaderboard page is reused. Rankwarden refreshes M+ every few hours. */
+  MPLUS_LEADERBOARD_CACHE_TTL_SECONDS: positiveInt(300),
+  /**
+   * How long the Mythic+ seasons answer (seasons, dungeons, cutoffs, affixes) is
+   * reused. Short enough for a live season's cutoffs, which move every M+ pass.
+   */
+  MPLUS_SEASONS_CACHE_TTL_SECONDS: positiveInt(3_600),
+  /**
+   * How long one Mythic+ run board page, the board's total, and its composition counts
+   * are reused.
+   */
+  MPLUS_RUNS_CACHE_TTL_SECONDS: positiveInt(300),
+  /** How long one run's details from Raider.io are reused: a finished run does not change. */
+  MPLUS_RUN_CACHE_TTL_SECONDS: positiveInt(86_400),
+  /** How long one season and region's cutoff analysis from Raider.io is reused. */
+  MPLUS_CUTOFFS_CACHE_TTL_SECONDS: positiveInt(3_600),
   /** A boss kill is history: it does not change once it happened. */
   GUILD_BOSS_KILL_CACHE_TTL_SECONDS: positiveInt(86_400),
   /** How long an expired guild part is kept past its TTL, to be served stale. */
@@ -394,8 +421,8 @@ export const envSchema = z.object({
   /** The shortest gap between two `forceRefresh` lookups of one guild. */
   GUILD_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
   /**
-   * How long the raid and Mythic+ season catalogue is held in memory before it
-   * is read again. Rankwarden re-reads both once a day.
+   * How long the raid and Mythic+ season lists stay in Redis before they are
+   * read from Mongo again. Rankwarden re-reads both once a day.
    */
   PVE_CATALOGUE_TTL_SECONDS: positiveInt(86_400),
   /** The shortest gap between two `forceRefresh` lookups of one character. */
