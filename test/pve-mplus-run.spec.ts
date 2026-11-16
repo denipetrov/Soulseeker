@@ -8,6 +8,7 @@ import {
   type Json,
   type TestApp,
 } from './support/app.js';
+import { RedisService } from '../src/redis/redis.service.js';
 import { openTestDatabase } from './support/database.js';
 
 let app: TestApp;
@@ -173,6 +174,35 @@ describe('GET /pve/mplus-run', () => {
 
   it('502 when Raider.io fails', async () => {
     expect((await run('keystoneRunId=500')).status).toBe(502);
+  });
+
+  it('503 with Retry-After and a message about the run when the Raider.io budget is spent', async () => {
+    // Fill the current bucket of Raider.io's minute window.
+    const redis = app.app.get(RedisService);
+    await redis.client.set(
+      redis.key('budget', 'raiderio', 'minute', Math.floor(Date.now() / 5000)),
+      '100000',
+      { expiration: { type: 'EX', value: 120 } },
+    );
+
+    const response = await fetch(`${app.url}/pve/mplus-run?keystoneRunId=100`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('retry-after')).toBe('60');
+    expect(await response.json()).toMatchObject({
+      statusCode: 503,
+      message: 'The Raider.io request budget is spent and this run is not cached; retry later.',
+    });
+    expect(requests()).toHaveLength(0);
+  });
+
+  it('says a missing run id is required', async () => {
+    const { status, body } = await run('');
+
+    expect(status).toBe(400);
+    expect(body.issues).toEqual([{ path: 'keystoneRunId', message: 'is required' }]);
   });
 
   it('400 for a missing or invalid run id', async () => {

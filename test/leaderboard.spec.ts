@@ -345,6 +345,18 @@ describe('GET /pvp/leaderboard — archived season', () => {
     expect(byFaction).toEqual({ horde: true, alliance: false });
   });
 
+  it('says a missing season id is required, and a non-numeric one must be a number', async () => {
+    for (const [query, message] of [
+      ['region=us&bracket=3v3', 'is required'],
+      ['region=us&bracket=3v3&seasonId=', 'is required'],
+      ['region=us&bracket=3v3&seasonId=abc', 'must be a number'],
+    ]) {
+      const response = await board(query!);
+      expect(response.status, query).toBe(400);
+      expect((response.body as Json).issues, query).toEqual([{ path: 'seasonId', message }]);
+    }
+  });
+
   it('refuses class and spec filters on archived 2v2, 3v3 and RBG', async () => {
     expect((await board('region=eu&seasonId=41&bracket=3v3&class=mage')).status).toBe(400);
     expect((await board('region=eu&seasonId=41&bracket=rbg&class=mage&spec=fire')).status).toBe(

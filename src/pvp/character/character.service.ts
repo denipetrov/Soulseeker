@@ -6,7 +6,6 @@ import { RunKind } from '../../common/logging/run-kind.js';
 import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { budgetErrorOf } from '../../common/quota/request-budget.js';
 import { describeError } from '../../common/utils/errors.js';
-import { SingleFlight } from '../../common/utils/single-flight.js';
 import type { CharacterDocument } from '../../characters/entities/character.entity.js';
 import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
@@ -14,6 +13,7 @@ import { MongoService } from '../../database/mongo.service.js';
 import type { CharacterSyncInput } from '../../rankwarden/dto/character-sync.dto.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
+import { SharedFlight, type Flight } from '../../redis/shared-flight.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
 import { CharacterLoader, type CharacterRef } from './character.loader.js';
 import { responseOf, syncPayloadOf } from './character.mapper.js';
@@ -48,8 +48,6 @@ export class PvpCharacterService {
   private readonly keepSeconds: number;
   private readonly cooldownSeconds: number;
   private readonly inlineSyncTimeoutMs: number;
-  /** One Blizzard load per part at a time on this replica. */
-  private readonly flights = new SingleFlight();
 
   constructor(
     private readonly loader: CharacterLoader,
@@ -57,6 +55,7 @@ export class PvpCharacterService {
     private readonly cooldown: RefreshCooldown,
     private readonly sync: RankwardenSyncClient,
     private readonly mongo: MongoService,
+    private readonly flights: SharedFlight,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVP_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -168,30 +167,54 @@ export class PvpCharacterService {
       return { response: responseOf(ref.region, cachedCore!, cachedLocalized!, false), sync: null };
     }
 
-    let core: CorePart;
-    let localized: LocalizedPart | null;
+    // One load of the parts needed across every replica: the same new page asked
+    // on two replicas at once is fetched, and pushed to Rankwarden, once.
+    const flightKey = [
+      `pvp:character:${id}`,
+      ...(needCore ? ['core'] : []),
+      ...(needLocalized ? [`locale:${query.locale}`] : []),
+    ].join(':');
+    let flight: Flight<Page | null>;
 
     try {
-      [core, localized] = await Promise.all([
-        needCore ? this.flights.run(coreKey, () => this.loader.core(ref)) : cachedCore!,
-        needLocalized
-          ? this.flights.run(localizedKey, () => this.loader.localized(ref, query.locale))
-          : cachedLocalized,
-      ]);
+      flight = await this.flights.run(
+        flightKey,
+        async () => {
+          const [core, localized] = await Promise.all([
+            needCore ? this.loader.core(ref) : cachedCore!,
+            needLocalized ? this.loader.localized(ref, query.locale) : cachedLocalized,
+          ]);
+          if (!localized) return null;
+
+          // Stored before the flight ends, so a replica waiting on it finds them.
+          const fresh = new Map<string, unknown>();
+          if (needCore) fresh.set(coreKey, core);
+          if (needLocalized) fresh.set(localizedKey, localized);
+          await this.cache.setMany(fresh, this.keepSeconds);
+
+          return { core, localized };
+        },
+        async () => {
+          const [core, localized] = (await this.cache.getMany<CorePart | LocalizedPart>([
+            coreKey,
+            localizedKey,
+          ])) as [CorePart | null, LocalizedPart | null];
+          const coreDone = !needCore || newerThan(core, cachedCore);
+          const localizedDone = !needLocalized || newerThan(localized, cachedLocalized);
+
+          return coreDone && localizedDone && core && localized ? { core, localized } : null;
+        },
+      );
     } catch (error) {
       return { response: this.fallback(ref, cachedCore, cachedLocalized, error), sync: null };
     }
 
-    if (!localized) throw new NotFoundException('No such character');
+    if (!flight.value) throw new NotFoundException('No such character');
+    const { core, localized } = flight.value;
 
-    const fresh = new Map<string, unknown>();
-    if (needCore) fresh.set(coreKey, core);
-    if (needLocalized) fresh.set(localizedKey, localized);
-    await this.cache.setMany(fresh, this.keepSeconds);
-
-    // Fresh ratings are what Rankwarden is told about; a cached core part was
-    // pushed when it was fetched.
-    const payload = needCore ? syncPayloadOf(ref.region, core, localized) : null;
+    // Fresh ratings are what Rankwarden is told about, by the one caller that
+    // fetched them; a cached core part was pushed when it was fetched.
+    const payload = needCore && flight.loaded ? syncPayloadOf(ref.region, core, localized) : null;
 
     return {
       response: responseOf(ref.region, core, localized, false),
@@ -223,7 +246,7 @@ export class PvpCharacterService {
 
     if (spent) {
       this.logger.warn(`No page for ${id}: ${spent.message}`);
-      throw new BudgetSpentException('Blizzard');
+      throw new BudgetSpentException('Blizzard', 'this character');
     }
 
     this.logger.warn(`Blizzard lookup of ${id} failed: ${describeError(error)}`);
@@ -243,6 +266,22 @@ export class PvpCharacterService {
       });
     });
   }
+}
+
+/** Both parts of a page. */
+interface Page {
+  core: CorePart;
+  localized: LocalizedPart;
+}
+
+/** A part stored after the one this caller found: another caller's fresh load. */
+function newerThan(
+  part: { fetchedAt: string } | null,
+  seen: { fetchedAt: string } | null,
+): boolean {
+  return (
+    part !== null && (seen === null || Date.parse(part.fetchedAt) > Date.parse(seen.fetchedAt))
+  );
 }
 
 /** Fresh ratings this answer has to hand to Rankwarden. */

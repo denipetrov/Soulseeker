@@ -6,9 +6,18 @@ corrections back to Rankwarden, and protects its API with OAuth 2.0 tokens it is
 itself.
 
 This document is written for agents that need to test or extend the service. It wins
-over [README.md](README.md) where the two differ in detail. The data model and its
-traps are Rankwarden's: read its handbook and `SKILLS.md` §5 and §9 before writing a
-query.
+over [README.md](README.md) and the online human handbook ([Soulseeker Handbook](https://claude.ai/artifact/NinpdHpweHpZmjF6N5kmxv))
+where they differ in detail. The data model and its traps are Rankwarden's: read its
+handbook and `SKILLS.md` §5 and §9 before writing a query.
+
+**Where to start:**
+
+- To **test** the service (live or in the suite), read §13, the testing playbook. It has
+  the commands, a smoke test of every endpoint, the invariants to assert, and the traps.
+- To **deploy** or check a deployment, read §14.
+- To **change an endpoint**, read its section in §6–§7, then §12 and §13.
+- After changing a route's parameters or response, update its section here, the
+  endpoint tables in README.md, and its block in the online handbook (a claude.ai artifact: edit it there, no local copy is kept).
 
 ---
 
@@ -52,6 +61,12 @@ query.
   (`src/rankwarden/dto/*.dto.ts` ↔ Rankwarden's `src/sync/dto/`). A 400 from Rankwarden
   is logged at `error` because it means they drifted.
 - **Every route needs a token** unless it is a health probe (`@Public()`).
+- **Never modify the Rankwarden repository.** Reading it is fine. A change Soulseeker needs
+  there (an index, a sync field, a NetworkPolicy entry) is written up as a proposal for the
+  user to make.
+- **Never print a credential** to the terminal or a report: not the `.env` values, not a
+  decoded Secret, not a token. Show lengths or fingerprints instead.
+- **The Kubernetes namespace is `soulseeker`**, never `backend`.
 
 ---
 
@@ -62,22 +77,28 @@ Same as Rankwarden, on purpose: Node 24 (engines ≥ 22), TypeScript 6 strict ES
 `zod` 4, Vitest 4 with SWC, ESLint 10 flat config, Prettier. Added: `redis` (node-redis
 6), `oidc-provider` 9 (certified OpenID Connect server, Koa inside), `jose` 6, `helmet`.
 
-`@denipetrov/spirit-link` 0.1: `logLevelsFor`, `withRunId`, `RunLogger`,
-`DependencyHealth`, `probeObservation`, `worstOf`, `hostOf`.
+`@denipetrov/spirit-link` 0.5: `logLevelsFor`, `withRunId`, `RunLogger`,
+`DependencyHealth`, `probeObservation`, `worstOf`, `hostOf`; `searchNameOf`
+(`/search`); `REPRESENTATION_MIN_RATINGS` (`/constants`); `RaidDifficulty`.
+`@denipetrov/blizz-auth` 0.1: the Blizzard OAuth token for the upstream.
 
 ## 2. Module map
 
 | Module | Provides |
 | --- | --- |
-| `AppConfigModule` | `ConfigService<Env, true>`; one zod schema, `src/config/env.schema.ts` |
+| `AppConfigModule` (global) | `ConfigService<Env, true>`; one zod schema, `src/config/env.schema.ts` |
 | `DatabaseModule` (global) | `MongoService`: typed read collections, cached `ping()` |
-| `RedisModule` (global) | `RedisService` (client, `key()`, `ping()`), `CacheService` |
-| `CommonModule` (global) | `DependencyHealth`, `BlizzardBudget`, `RaiderIoBudget` |
+| `RedisModule` (global) | `RedisService` (client, `key()`, `ping()`), `SharedFlight` (one load per key across replicas), `CacheService` (`getOrLoad`), `RefreshCooldown` |
+| `CommonModule` (global) | `DependencyHealth`, `BlizzardBudget`, `RaiderIoBudget`, the global `BudgetSpentFilter` |
 | `AuthModule` | the OIDC provider, `SessionController`, global `AccessTokenGuard` then `RateLimitGuard` |
-| `BlizzardModule` | `ProfileApi` (profile, specializations, pvp bracket) |
-| `RaiderIoModule` | `RaiderIoCharacterApi` |
+| `BlizzardModule` | `ProfileApi` (profile, specializations, PvP, media, statistics, equipment, achievements, raid encounters) |
+| `RaiderIoModule` | `RaiderIoCharacterApi`, `RaiderIoGuildApi`, `RaiderIoMythicPlusApi` (run details, cutoff analysis) |
 | `RankwardenModule` | `RankwardenSyncClient` |
-| `CharactersModule` | imports the three above; feature controllers and services go here |
+| `SeasonsModule` | `CurrentSeasons` (PvP and M+ current season per region, 60 s in memory), `PveCatalogue` (raids and M+ seasons, in Redis) |
+| `SearchModule` | `/search/suggestions` |
+| `PvpModule` | every `/pvp/*` route; `PvpSeasonsService`, `BoardEnricher` |
+| `PveModule` | every `/pve/*` route; `MplusSeasonResolver`, `GuildRefs`, `MplusSeasonsService`, `MplusRunsService` |
+| `CharactersModule` | read-side entities (`src/characters/entities/`) and the shared identity DTO |
 | `HealthModule` | `/health`, `/health/ready` |
 
 `configureApp()` (`src/configure-app.ts`) is shared by `main.ts` and the test harness.
@@ -119,6 +140,42 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
   **fail open**: if Redis is down, the request is let through and a warning is logged.
 - A 404 from Blizzard, or a 400/404 from Raider.io, means "no such character". It
   resolves to `null` and is recorded as a *successful* upstream call.
+- **A spent budget with nothing kept** throws `BudgetSpentException(upstream, subject)`
+  (`src/common/quota/budget-spent.exception.ts`). `subject` names what is not cached:
+  `this character`, `this guild`, `this run`, `this cutoff analysis`. The global
+  `BudgetSpentFilter` answers it as 503 with `Retry-After: 60` on every route. Throw it;
+  never set the header in a controller (two routes once forgot it).
+
+### One fetch across replicas
+
+`SharedFlight` (`src/redis/shared-flight.service.ts`) makes an upstream load happen once per
+key across every replica, not just per process. Without it, one new page asked on two
+replicas at once cost twice the budget and was synced to Rankwarden twice, which rotated
+`previousRating` a second time (prodlike report ISSUE-01, 2026-11-16).
+
+- `run(key, load, peek)` returns `{ value, loaded }`.
+  - The first caller claims `<prefix>lock:<key>` with `SET NX PX` (30 s) and runs `load`.
+  - Every other caller polls `peek` every 150 ms until it answers.
+  - If the lock disappears and `peek` has nothing (the load failed, or found nothing), the
+    waiter claims the lock and loads itself.
+- **`load` must write its result to the cache before returning.** The lock is released
+  after `load`, so a waiter that sees the lock gone always finds the result.
+- **`peek` must accept only a result newer than the caller already had** (compare
+  `fetchedAt`). Otherwise a forced refresh would take the copy it set out to replace.
+- **`loaded` is true for exactly one caller.** Work done once per fetch keys off it: the
+  PvP and PvE character syncs. Same-process callers that share a load get `false` too.
+- **Fails open**: with Redis down, every caller loads, as before.
+- **Used by:** the PvP character page (one flight for the parts it needs), the PvE
+  character page (one per field set) and its bosses part, the cached guild widgets, and
+  `CacheService.getOrLoad(…, { acrossReplicas: true })` for `/pve/mplus-run` and
+  `/pve/mplus-cutoffs`. MongoDB-backed answers do not use it: the lock's round trips cost
+  more than a duplicate read.
+- **Not shared:** the guild's full roster is never cached, so it has nothing to peek. It
+  keeps the per-process `SingleFlight`.
+- **Edge left open:** one new PvP character asked in two languages at once on two replicas
+  takes two flights (`core+locale:en_US` and `core+locale:de_DE`), and so two syncs.
+- Tests: `test/pvp-character.spec.ts`, "asked twice at once on one replica" and "asked on
+  two replicas at once". Both fail on the per-process version.
 
 ## 4. Auth
 
@@ -126,6 +183,8 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
   There is one public client, `soulseeker-web`, with `token_endpoint_auth_method: none`
   and grants `urn:soulseeker:grant-type:anonymous` and `refresh_token`.
 - **Anonymous grant** (`src/auth/oidc/anonymous.grant.ts`):
+  - A `resource` other than `OIDC_API_RESOURCE` (exactly) is 400 `invalid_target`
+    (RFC 8707). Without one, the token is for the API.
   - It runs `IssuancePolicy.check` first: the Origin must be in `CORS_ORIGINS` (403
     otherwise), at most `RATE_LIMIT_TOKEN_PER_MINUTE` per IP (429 with Retry-After), and
     Turnstile when `TURNSTILE_ENABLED` (`turnstile_token` form parameter).
@@ -133,6 +192,14 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
     `api:read`, an access token and a refresh token.
   - The checks live in the grant, not in middleware, because the grant type is in a body
     only oidc-provider may parse.
+- **Origin gate** (`tokenOriginGate`, `issuance-origins.ts`, installed with `provider.use`):
+  `POST /oidc/token` and its `OPTIONS` preflight answer 403
+  `{ error: 'access_denied', error_description: 'origin not allowed' }` unless `Origin` is
+  an issuance origin. This covers both grants: the refresh grant needs an Origin too.
+  - It runs before oidc-provider's own client-based CORS check. That check answered a
+    foreign Origin with 400 `invalid_request`, let a missing one through, and reflected
+    any origin on the preflight (prodlike report ISSUE-04 and ISSUE-06).
+  - Discovery, JWKS and revocation are not gated.
 - **Tokens:**
   - Access token: ES256 JWT, `typ: at+jwt`, `aud` = the API resource, 600 s.
   - Refresh token: opaque, 12 h, rotated on every use. Reuse revokes the grant.
@@ -201,7 +268,12 @@ These are separate from Rankwarden's, and shared across replicas through Redis.
 - **Cache.** Whole answers are cached in Redis per type and prefix for
   `SEARCH_CACHE_TTL_SECONDS` (60).
 
-## 7. PvP seasons and title cutoffs
+## 7. Endpoints
+
+One subsection per route or service, PvP first, then PvE. Each gives the parameters, the
+reads, the shape, the cache and the errors.
+
+### PvP seasons and title cutoffs
 
 `PvpSeasonsService` (`src/pvp/seasons/`) is what the leaderboard endpoint reads for season
 detail and the cutoff of the ladder it shows.
@@ -477,6 +549,66 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
   25/0 covered and EU 3v3 has no rows with a spec. US 3v3 is fully covered; US Blitz is
   partly covered (Arms 35 of 100).
 
+### PvP spec representation
+
+`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&getEarliestDate=true]`
+(`src/pvp/representation/`). It reads one snapshot from Rankwarden's
+`spec_representation` straight from MongoDB.
+
+- **Not cached, on purpose.** The collection is a few hundred small documents, and a
+  request reads one, or two with `getEarliestDate`.
+- **Parameters.**
+  - `rating` must be one of `REPRESENTATION_MIN_RATINGS` from
+    `@denipetrov/spirit-link/constants` (≥ 0.3.0): `1500, 1800, 2100, 2300, 2700`.
+    Rankwarden writes snapshots at exactly those, and the front end offers the same
+    list.
+  - `bracket` is a family (`2v2` … `blitz`).
+  - `date` is a UTC day, `YYYY-MM-DD`; impossible days such as `2026-02-30` are 400.
+  - `date=latest` answers the newest snapshot stored for that region, bracket and
+    rating: the newest by `date`, whether or not it has classified specs. It covers the
+    hours after midnight UTC before Rankwarden has computed the day. The response
+    `date` is the day actually answered.
+- **No season parameter.** Rankwarden deletes snapshots from before the current season,
+  so a day names one season. On a rollover day the newer season wins.
+- **404** when there is no snapshot: for a day (today before the daily job has run, or a
+  day the job missed), or for `latest` with nothing stored at all. A 200 therefore
+  always carries a real snapshot. The front end's first load should ask for
+  `date=latest&getEarliestDate=true`, which answers as soon as Rankwarden has written
+  one day.
+- **`earliestDate`** is the first day whose snapshot has `classified > 0` for the same
+  region, bracket and rating. Snapshots from before Rankwarden enriched a 2v2, 3v3 or
+  RBG ladder count players but name no spec, and the calendar should not offer them.
+  It is null when no day qualifies, which is every EU 2v2, 3v3 and RBG snapshot today.
+- **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
+  `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
+
+#### History, for a graph over time
+
+`GET /pvp/spec-representation/history?region=&bracket=&rating=` returns each spec over
+the last `HISTORY_DAYS` (31) UTC days, today included, as drawn by sites like
+drustvar.com's "flavor of the month".
+
+- **Parameters.** The daily endpoint's `region`, `bracket` and `rating`, picked from its
+  schema so the two cannot drift. There is no date: the window always ends today (UTC).
+- **Response.** `from` and `to` are the window, for the axis. `days` lists only days
+  that have a snapshot, oldest first.
+  - Days are missing when Rankwarden did not write them: today before its daily run, a
+    day the job missed, or days before the current season, which Rankwarden deletes.
+    `days[0].date` is where the data starts.
+  - A spec is also missing from a day nobody played it on at that rating (EU Blitz 2700
+    has 39 specs one day and 40 the next); the graph treats it as 0.
+- **Per day:** `date`, `computedAt`, `total`, `classified`, and `specs`, most played
+  first. Each spec is exactly the daily endpoint's entry for that date, hero talents
+  included (`heroTalentsClassified`, `heroTalents[]`), checked on real data.
+- **Size.** Hero talents make up most of the payload: a full Shuffle month is ~265 KB
+  raw, against ~79 KB without them. The API compresses responses.
+- **Unenriched 2v2, 3v3 and RBG** days are still listed, with `classified: 0` and empty
+  `specs`.
+- **Reading.** One range read through `snapshot_identity` (date first), at most 31
+  documents. Not cached, like the daily endpoint. On a rollover day with two seasons,
+  the newer one wins.
+- **404** only when the whole window is empty.
+
 ### PvP character
 
 `GET /pvp/character?region=&realmSlug=&characterName=[&locale=en_US][&forceRefresh=true]`
@@ -496,7 +628,8 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
   and `…:locale:<locale>`, so a second language costs 3 requests.
   - A part is fresh for `PVP_CHARACTER_CACHE_TTL_SECONDS` (6 h), judged by its own
     `fetchedAt`. Redis keeps it `PVP_CHARACTER_STALE_SECONDS` (24 h) longer.
-  - There is a single flight per part on each replica.
+  - One flight across replicas for the parts a request needs (`SharedFlight`). Only the
+    caller that fetched syncs.
   - `forceRefresh` claims `refresh:pvp:character:<id>` (`RefreshCooldown`) with `SET NX EX`
     (`PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS`, 300). While the claim is held, it is
     ignored and the cache answers. Without Redis it is refused.
@@ -624,7 +757,8 @@ kills from Blizzard's `encounters/raids`.
     `PVE_CHARACTER_STALE_SECONDS` (24 h) longer.
   - `forceRefresh` goes through `RefreshCooldown` (`refresh:pve:character:<id>`,
     `PVE_CHARACTER_REFRESH_COOLDOWN_SECONDS`) and refetches the bosses too.
-  - There is a single flight per field set, and for the bosses, on each replica.
+  - One flight across replicas per field set, and for the bosses (`SharedFlight`). Only
+    the caller that fetched the whole page pushes it.
 - **Failures.** Raider.io's 400 ("no such character") is a 404. Otherwise, as for PvP: stale
   if every Raider.io part asked for is kept, else 503 with `Retry-After: 60` for a spent
   budget and 502 for anything else.
@@ -1129,67 +1263,7 @@ encounter, with its boards (`bossRankings.<board>.<difficulty>`, the first 50 gu
 - PvP brackets carry no `rank`: only the leaderboard has one, and Rankwarden keeps what its
   sweep stored.
 
-### Spec representation
-
-`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&getEarliestDate=true]`
-(`src/pvp/representation/`). It reads one snapshot from Rankwarden's
-`spec_representation` straight from MongoDB.
-
-- **Not cached, on purpose.** The collection is a few hundred small documents, and a
-  request reads one, or two with `getEarliestDate`.
-- **Parameters.**
-  - `rating` must be one of `REPRESENTATION_MIN_RATINGS` from
-    `@denipetrov/spirit-link/constants` (≥ 0.3.0): `1500, 1800, 2100, 2300, 2700`.
-    Rankwarden writes snapshots at exactly those, and the front end offers the same
-    list.
-  - `bracket` is a family (`2v2` … `blitz`).
-  - `date` is a UTC day, `YYYY-MM-DD`; impossible days such as `2026-02-30` are 400.
-  - `date=latest` answers the newest snapshot stored for that region, bracket and
-    rating: the newest by `date`, whether or not it has classified specs. It covers the
-    hours after midnight UTC before Rankwarden has computed the day. The response
-    `date` is the day actually answered.
-- **No season parameter.** Rankwarden deletes snapshots from before the current season,
-  so a day names one season. On a rollover day the newer season wins.
-- **404** when there is no snapshot: for a day (today before the daily job has run, or a
-  day the job missed), or for `latest` with nothing stored at all. A 200 therefore
-  always carries a real snapshot. The front end's first load should ask for
-  `date=latest&getEarliestDate=true`, which answers as soon as Rankwarden has written
-  one day.
-- **`earliestDate`** is the first day whose snapshot has `classified > 0` for the same
-  region, bracket and rating. Snapshots from before Rankwarden enriched a 2v2, 3v3 or
-  RBG ladder count players but name no spec, and the calendar should not offer them.
-  It is null when no day qualifies, which is every EU 2v2, 3v3 and RBG snapshot today.
-- **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
-  `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
-
-#### History, for a graph over time
-
-`GET /pvp/spec-representation/history?region=&bracket=&rating=` returns each spec over
-the last `HISTORY_DAYS` (31) UTC days, today included, as drawn by sites like
-drustvar.com's "flavor of the month".
-
-- **Parameters.** The daily endpoint's `region`, `bracket` and `rating`, picked from its
-  schema so the two cannot drift. There is no date: the window always ends today (UTC).
-- **Response.** `from` and `to` are the window, for the axis. `days` lists only days
-  that have a snapshot, oldest first.
-  - Days are missing when Rankwarden did not write them: today before its daily run, a
-    day the job missed, or days before the current season, which Rankwarden deletes.
-    `days[0].date` is where the data starts.
-  - A spec is also missing from a day nobody played it on at that rating (EU Blitz 2700
-    has 39 specs one day and 40 the next); the graph treats it as 0.
-- **Per day:** `date`, `computedAt`, `total`, `classified`, and `specs`, most played
-  first. Each spec is exactly the daily endpoint's entry for that date, hero talents
-  included (`heroTalentsClassified`, `heroTalents[]`), checked on real data.
-- **Size.** Hero talents make up most of the payload: a full Shuffle month is ~265 KB
-  raw, against ~79 KB without them. The API compresses responses.
-- **Unenriched 2v2, 3v3 and RBG** days are still listed, with `classified: 0` and empty
-  `specs`.
-- **Reading.** One range read through `snapshot_identity` (date first), at most 31
-  documents. Not cached, like the daily endpoint. On a rollover day with two seasons,
-  the newer one wins.
-- **404** only when the whole window is empty.
-
-### API docs
+## 9. API docs (Swagger)
 
 `@nestjs/swagger` (`src/docs/`), served at `/docs` (`/docs/openapi.json`) only when
 `NODE_ENV` is not `production`. The docs map every route, and anonymous tokens exist to
@@ -1213,7 +1287,7 @@ make scraping harder.
   Under plain http that directive sends the browser to `https://localhost` for the UI's
   own scripts, and the page stays blank. The API keeps the full policy.
 
-## 9. Health and logging
+## 10. Health and logging
 
 - `/health` is liveness and touches nothing. `/health/ready` pings MongoDB and Redis
   (both hard dependencies, 503 if either is down). Blizzard, Raider.io and Rankwarden
@@ -1227,7 +1301,7 @@ make scraping harder.
 - The Blizzard OAuth check at boot logs an error and records a health failure, but does
   not stop the boot (Blizzard is a soft dependency here, unlike in Rankwarden).
 
-## 10. Configuration
+## 11. Configuration
 
 All variables are validated at start; `npm run config:check` runs the same validation
 without starting. `.env.example` documents each one. Production refuses to start
@@ -1235,7 +1309,7 @@ without `OIDC_JWKS`, without `OIDC_COOKIE_KEYS`, or with an `http://` issuer. En
 paths are configuration (`BLIZZARD_PATH_*`, `RAIDERIO_PATH_*`) with checked
 placeholders, as in Rankwarden.
 
-## 11. Testing
+## 12. Test suite
 
 - **Unit** (`src/**/*.spec.ts`): no services needed.
 - **Integration** (`test/**/*.spec.ts`):
@@ -1259,3 +1333,323 @@ placeholders, as in Rankwarden.
   - Same fix as Rankwarden's CI (83825fd).
   - The same limit applies to a local Docker VM. This machine's WSL2 kernel is 6.18,
     just below the range, so a WSL kernel update could stop the local MongoDB.
+
+## 13. Testing playbook
+
+For agents asked to test Soulseeker, whether the suites or a running instance. Everything
+here can be run without asking, except what spends real upstream quota at scale or
+touches a cluster: say what you will run first.
+
+### 13.1 Choose the kind of test
+
+| Kind | Proves | Touches | Use when |
+| --- | --- | --- | --- |
+| Unit (`npm test`) | pure logic: schemas, scoring, mappers, budgets, sync client | nothing | always, first |
+| Integration (`npm run test:int`) | the real app end to end, with every upstream faked | local MongoDB + Redis, test databases only | after any change to a route |
+| Live smoke (§13.4) | the running service against real data | the local `rankwarden` database (read), real Blizzard / Raider.io (a few calls), Rankwarden's sync (writes) | checking a build, a deploy, or real data shapes |
+
+Report results as counts: files and tests passed and failed, with each failing test's name
+and assertion. If a step was skipped (MongoDB down, no credentials), say so; do not call
+it passed.
+
+### 13.2 Prerequisites
+
+```bash
+node --version                 # 24.x
+npm install                    # needs the read:packages token in ~/.npmrc
+npm run db:up                  # Redis on 6379
+# MongoDB on 27017: Rankwarden's compose (its data), or `npm run db:up:standalone` (empty)
+npm run build                  # the suites do not need it; config:check and start:prod do
+```
+
+- The integration suite's global setup fails readably if MongoDB or Redis is down. It does
+  not need Rankwarden's data: every file seeds its own. `TEST_MONGODB_URI` and
+  `TEST_REDIS_URL` point it elsewhere.
+- A live smoke test needs Rankwarden's data in MongoDB, `.env` filled in, and
+  `npm run start:dev` (or `npm run docker:up`). Rankwarden on `:3000` is needed only to see
+  syncs land; without it they fail quietly, and readiness shows `rankwarden: down`, which
+  degrades the status but keeps 200.
+
+### 13.3 Running the suites
+
+```bash
+npm run typecheck && npm run lint
+npm test                                                        # unit
+npm run test:int                                                # integration
+npx vitest run --project integration test/pve-raid.spec.ts      # one file
+npx vitest run --project integration -t "falls back to heroic"  # by test name
+npm run test:cov                                                # unit coverage
+```
+
+Each endpoint has one integration file:
+
+| Endpoint | File |
+| --- | --- |
+| `/oidc/*`, `/session`, guards | `test/auth.spec.ts` |
+| budgets across replicas | `test/budgets.spec.ts` |
+| compression | `test/compression.spec.ts` |
+| Swagger | `test/docs.spec.ts` |
+| `/health*` | `test/health.spec.ts` |
+| `/search/suggestions` | `test/search.spec.ts` |
+| `/pvp/leaderboard` | `test/leaderboard.spec.ts` |
+| `/pvp/cutoffs` | `test/cutoffs.spec.ts` |
+| `/pvp/tier-list` | `test/tier-list.spec.ts` |
+| `/pvp/hero-talents` | `test/pvp-hero-talents.spec.ts` |
+| `/pvp/spec-representation` (+ history) | `test/spec-representation.spec.ts`, `test/spec-representation-history.spec.ts` |
+| `/pvp/character` | `test/pvp-character.spec.ts` |
+| PvP seasons service | `test/pvp-seasons.spec.ts` |
+| `region=world` on PvP | `test/pvp-world.spec.ts` |
+| `/pve/character` | `test/pve-character.spec.ts` |
+| `/pve/guild` | `test/guild.spec.ts` |
+| PvE catalogue | `test/pve-catalogue.spec.ts` |
+| `/pve/raids`, `/pve/raid`, `/pve/bosses` | `test/pve-raids.spec.ts`, `test/pve-raid.spec.ts`, `test/pve-bosses.spec.ts` |
+| `/pve/mplus-seasons` | `test/pve-mplus-seasons.spec.ts` |
+| `/pve/mplus-leaderboard` | `test/pve-mplus-leaderboard.spec.ts` |
+| `/pve/mplus-runs`, `/pve/mplus-run` | `test/pve-mplus-runs.spec.ts`, `test/pve-mplus-run.spec.ts` |
+| `/pve/mplus-compositions` | `test/pve-mplus-compositions.spec.ts` |
+| `/pve/spec-representation` | `test/pve-spec-representation.spec.ts` |
+| `/pve/tier-list` | `test/pve-tier-list.spec.ts` |
+| `/pve/mplus-cutoffs` | `test/pve-mplus-cutoffs.spec.ts` |
+
+### 13.4 Live smoke test
+
+Against `http://localhost:3001` (or a port-forward). Get a token first; the `Origin` must be
+in `CORS_ORIGINS` (`http://localhost:5173` locally, `https://rankwarden.gg` in production):
+
+```bash
+BASE=http://localhost:3001
+ORIGIN=http://localhost:5173
+token() {
+  curl -s -X POST "$BASE/oidc/token" -H "Origin: $ORIGIN" \
+    -d grant_type=urn:soulseeker:grant-type:anonymous -d client_id=soulseeker-web | jq -r .access_token
+}
+T=$(token)                                   # lasts 10 min; call token() again after
+get() { curl -s -w '\n%{http_code} %{time_total}s\n' -H "Authorization: Bearer $T" "$BASE$1"; }
+get '/pvp/tier-list?region=us&bracket=shuffle'
+```
+
+Against a production-configured instance (issuer `https://api.rankwarden.gg/oidc`), use
+`ORIGIN=https://rankwarden.gg` and also send
+`--data-urlencode resource=https://api.rankwarden.gg`.
+
+Each request below is answered from MongoDB unless marked. The figures are those of the
+local data on 2026-11-16 and will move. **U** marks a real upstream call (Blizzard or
+Raider.io quota); **S** marks a write to Rankwarden through its sync endpoint.
+
+| Request | Expect |
+| --- | --- |
+| `/health/ready` (no token) | 200, `status` `ok` or `degraded`, `mongo` and `redis` `ok` |
+| `/session` | 200, `subject` starts `anon:`, `scopes` `["api:read"]` |
+| `/search/suggestions?type=pvp&q=pe` | 200, `characters` ≤ 100, `guilds` `[]` |
+| `/search/suggestions?type=pve&q=ec` | 200, `characters` and `guilds` |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=3v3&pageSize=3` | 200, `current: true`, 3 entries, ratings non-increasing |
+| `/pvp/leaderboard?region=world&seasonId=42&bracket=3v3` | 200, `cutoff: null`, `regionCutoffs`, each entry has `region` |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=shuffle-mage-fire` | 200, every entry's `bracket` is `shuffle-mage-fire` |
+| `/pvp/cutoffs?region=us&bracket=shuffle` | 200, `cutoff: null`, every spec has its own `cutoff` |
+| `/pvp/cutoffs?region=us&bracket=3v3&class=rogue&spec=subtlety` | 200, every character at or above `cutoff.rating` |
+| `/pvp/tier-list?region=us&bracket=shuffle` | 200, 40 specs, scores non-increasing, tiers S→D in order |
+| `/pvp/hero-talents?region=world&bracket=3v3&top=50` | 200, 13 classes; every spec's `covered` ≤ `characters` ≤ 50 |
+| `/pvp/spec-representation?region=eu&bracket=shuffle&rating=2100&date=latest&getEarliestDate=true` | 200, `share`s sum to ~1, `earliestDate` key present |
+| `/pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | 200, `days` oldest first, all within `from`–`to` |
+| `/pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | 200 **U S**; `brackets` non-empty; Rankwarden logs "Synced us/Petkick" |
+| `/pve/character?region=us&realmSlug=illidan&characterName=Bondd` | 200 **U S**; `previousMythicScore` key present; Rankwarden logs "Synced Mythic+ us/illidan/bondd" |
+| `/pve/character?region=us&realmSlug=illidan&characterName=Bondd&mplusSeasonScore=season-mn-2` | 200 **U**, `mythicPlusScores` only: no run lists, no `previousMythicScore` |
+| `/pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | 200 **U**, `members` of ranks 0 and 1 only |
+| `/pve/raids` | 200, 31 raids, `ends` null for open raids |
+| `/pve/raid?raidSlug=current` | 200, `difficulty` `mythic`, ≤ 100 guilds |
+| `/pve/bosses?raidSlug=current&top=3` | 200, one `difficulty` for the whole answer, ≤ 3 rankings per boss |
+| `/pve/mplus-seasons` | 200, 21 seasons, `affixes` non-empty |
+| `/pve/mplus-leaderboard?region=world&pageSize=5` | 200, `current: true`, scores non-increasing, `isFullyCovered` on each entry |
+| `/pve/mplus-runs?region=world&dungeon=murder-row&pageSize=5` | 200, every run's `dungeon.slug` is `murder-row`, `rank` 1..5 |
+| `/pve/mplus-run?keystoneRunId=19324786` | 200 **U**, `dungeon.slug` `murder-row`, `mythic_level` 22 |
+| `/pve/mplus-compositions?top=1000` | 200, ≤ 50 compositions of 5 members, `share`s sum to ≤ 1 |
+| `/pve/spec-representation?region=world` | 200, `percent`s sum to ~100 |
+| `/pve/tier-list?region=world` | 200, `minScore` 2000, 40 specs |
+| `/pve/mplus-cutoffs?region=us` | 200 **U**, `populations` and `history` |
+
+Send a second identical request to see the cache: the same body, much faster. A
+`forceRefresh=true` repeated within 5 minutes is ignored. **Never loop the U rows**: each
+costs real quota (a PvP page is ~14 Blizzard requests). Each S row rotates Rankwarden's
+`previousRating` or `previousMythicScore`.
+
+### 13.5 Negative cases
+
+| Request | Expect |
+| --- | --- |
+| any API route without `Authorization` | 401 `invalid_request` |
+| with a garbage or expired token | 401 `invalid_token` |
+| `POST /oidc/token` without `Origin`, or with another (either grant) | 403 `access_denied` "origin not allowed" |
+| `OPTIONS /oidc/token` with a foreign `Origin` | 403, no `Access-Control-Allow-Origin` |
+| anonymous grant with `resource=https://evil.example` | 400 `invalid_target` |
+| `/pvp/leaderboard?region=us&bracket=3v3` (no `seasonId`) | 400, `seasonId`: "is required" |
+| `/pve/mplus-run?keystoneRunId=abc` | 400, "must be a number" |
+| a Raider.io route with the minute budget spent and nothing cached | 503, `Retry-After: 60`, message naming the run, guild, character or cutoff analysis |
+| 11 token requests in a minute from one IP | 429 with `Retry-After` |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=3v3&spec=fire` | 400, spec needs class |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=3v3&page=4002&pageSize=50` | 400, past row 200,000 |
+| `/pvp/cutoffs?region=us&bracket=2v2` | 400 |
+| `/pvp/cutoffs?region=us&bracket=3v3&class=paladin&spec=fire` | 404 |
+| `/pvp/spec-representation?region=eu&bracket=3v3&rating=2000&date=latest` | 400, not a snapshot rating |
+| `/pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-02-30` | 400, not a calendar date |
+| `/pvp/character?region=cn&realmSlug=x&characterName=abc` | 400, no Blizzard API in China |
+| `/pvp/character?region=us&realmSlug=x&characterName=a1` | 400, letters only |
+| `/pve/character?region=us&realmSlug=illidan&characterName=Bondd&raidProgression=nope` | 400, not in the catalogue; no Raider.io call |
+| `/pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo&showFullRoster=true&raidEncounters=tier-mn-1` | 400, one widget per call |
+| `/pve/mplus-leaderboard?class=mage&spec=fire&role=dps` | 400, spec and role never together |
+| `/pve/mplus-runs?season=season-nope` | 404 |
+| `/pve/mplus-runs?season=season-mn-1&dungeon=murder-row` | 404, not run in MN 1 |
+| `/pve/raid?raidSlug=nope` | 404 |
+| `/pve/bosses?raidSlug=current&bossSlug=nope` | 404 |
+
+Every 400 body is `{ message: "Invalid <what>", issues: [{ path, message }] }`, and never
+repeats the input. A required numeric parameter (`seasonId`, `rating`, `keystoneRunId`)
+goes through `requiredNumber()` (`src/common/pipes/required-number.ts`), so a missing one
+reads "is required", not "expected number, received NaN".
+
+To spend a budget in a test, fill the current bucket in Redis: for Raider.io,
+`redis.key('budget', 'raiderio', 'minute', Math.floor(Date.now() / 5000))`. For
+Blizzard's hour, use one-minute buckets: `redis.key('budget', 'blizzard', 'hour',
+Math.floor(Date.now() / 60000))`. The 503 test in `test/pve-mplus-run.spec.ts` does this.
+
+### 13.6 Invariants worth asserting
+
+- **Boards.** Ratings or scores non-increasing down a page; `entries.length ≤ pageSize`;
+  `rank` on the M+ boards is `(page − 1) × pageSize + i + 1`; `totalPages` never points past
+  row 200,000.
+- **`world`.** Every PvP and M+ entry carries `region`. PvP world answers have
+  `cutoff: null` and a `regionCutoffs` map.
+- **Tier lists.** Exactly the 40 pairs of `ALL_SPECS`; `score` in 0–100 and non-increasing;
+  tier order S, A, B, C, D; each line within 2 specs of its baseline (4/10/12/10/4 for 40).
+- **Shares.** PvP `share` is 0–1 and sums to ~1 over `specs`; M+ `percent` is 0–100;
+  composition `share`s sum to at most 1.
+- **Optional keys.** Archived PvP rows have no profile keys at all (absent, not null).
+  `previousMythicScore` exists only on the whole `/pve/character` page. Each guild widget
+  answers only its own shape.
+- **Freshness.** `stale: false` unless an upstream failed; `fetchedAt` is ISO.
+- **Compression.** An answer over 1 KB, asked with `Accept-Encoding: br`, has
+  `Content-Encoding: br`; `/health*` and `/oidc*` are never compressed.
+
+### 13.7 Writing an integration test
+
+```ts
+import { anonymousTokens, bootTestApp, resetRedis, type TestApp } from './support/app.js';
+import { openTestDatabase } from './support/database.js';
+
+let app: TestApp, db: Db, drop: () => Promise<void>, token: string;
+
+beforeAll(async () => {
+  app = await bootTestApp({ env: { RATE_LIMIT_API_PER_MINUTE: '1000', RAIDERIO_RETRY_LIMIT: '0' } });
+  ({ db, drop } = await openTestDatabase(app.dbName));
+  // Seed Rankwarden's shapes: catalogue, current-season state, the documents read.
+  await db.collection('mplus_seasons').insertMany([/* … */]);
+  await db.collection('mplus_season_state').insertMany([/* … */]);
+  // Create every index the service hints by name, with Rankwarden's exact name and keys.
+  await db.collection('mplus_runs').createIndexes([/* … */]);
+  token = (await anonymousTokens(app)).access_token;
+});
+beforeEach(() => resetRedis(app)); // otherwise the cache answers with the last test's data
+afterAll(async () => {
+  await drop?.();
+  await resetRedis(app);
+  await app?.close();
+});
+
+it('answers the run', async () => {
+  app.upstream.route((req) =>
+    req.path === '/raiderio/mythic-plus/run-details' ? { status: 200, body: details } : undefined,
+  );
+  const res = await fetch(`${app.url}/pve/mplus-run?keystoneRunId=100`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  expect(res.status).toBe(200);
+  expect(app.upstream.requestsTo('/raiderio/mythic-plus/run-details')).toHaveLength(1);
+});
+```
+
+The traps:
+
+- **Hinted indexes must exist.** Board queries pass `hint` with Rankwarden's index name
+  (`Indexes`, `MplusBoardIndexes`, `MplusRunIndexes` in `src/database/collections.ts`). On a
+  test database without that index the query fails, and the route answers 500. Copy the
+  name and keys from `collections.ts`.
+- **One configuration per file.** `ConfigModule` reads the environment once per module
+  graph, and `bootTestApp` refuses a second boot with different settings. A test that needs
+  other settings goes in another file.
+- **`CurrentSeasons` caches 60 s in memory**, per app. Seed `season_state` and
+  `mplus_season_state` before the first request, and do not change the current season within
+  a file.
+- **Redis survives between tests** in a file. Call `resetRedis(app)` in `beforeEach`, or a
+  cached answer hides the change. That includes the catalogue keys (`pve:raids`,
+  `pve:mplus-seasons`).
+- **Unrouted upstream calls answer 599.** Route every path the code calls; routes are tried
+  newest first. `app.upstream.requestsTo(prefix)` counts calls: that is how "cached, not
+  asked again" and "400 before any upstream call" are proved.
+- **Upstream paths** on the fake: `/blizzard/<region>/…`, `/raiderio/…`, `/rankwarden/…`,
+  `/turnstile`. A fake Rankwarden route may write to the test database before answering, to
+  stand for a real sync.
+- **Two replicas**: boot twice in one file with the same `env`, passing the same `upstream`,
+  as `test/budgets.spec.ts` and `test/pvp-character.spec.ts` do. Each replica signs its
+  own tokens in tests, so get a token from each (`anonymousTokens(replica)`). To make two
+  requests overlap, add a route that holds its answer (`await` a timer) before returning.
+- **Speed**: set `*_RETRY_LIMIT` to `0` in failure tests, or each failure waits for got's
+  retry.
+- **Dates** in seeds are `Date` objects, as Rankwarden stores them; answers carry ISO strings.
+
+### 13.8 Testing in a local Kubernetes cluster
+
+This machine has a kind cluster, `prodlike`, with Rankwarden deployed. Two local traps:
+
+- Host `kubectl` fails TLS (antivirus interception, or a stale kubeconfig). Run `kubectl` and
+  `helm` in a container on the docker `kind` network, with the kubeconfig's server set to
+  `https://prodlike-control-plane:6443`.
+- Load images with
+  `docker save soulseeker:local | docker exec -i prodlike-control-plane ctr -n k8s.io images import -`
+  when `kind load` is not available.
+
+Then deploy as §14 says. To prove the NetworkPolicies, start throwaway pods with
+`kubectl run --rm -i --restart=Never` in each namespace, with and without the
+`soulseeker.io/redis-client=true` label, and try a TCP connect to each service:
+
+- Rankwarden `:3000` and MongoDB `:27017`: open from `soulseeker`, refused from `default`.
+- Readiness is per replica: each pod reports upstreams only from its own traffic. Check
+  every pod; budgets read the same on all of them.
+- Redis: open only to labelled pods in `soulseeker`.
+- Soulseeker `:3001`: refused to everything but the gateway namespace.
+
+## 14. Deployment
+
+Read [deploy/README.md](deploy/README.md) for the full procedure. What an agent needs:
+
+- **Namespace `soulseeker`.** It is the default in both scripts (`NAMESPACE`). Rankwarden's
+  NetworkPolicies must list it: `networkPolicy.allowedNamespaces` in its `rankwarden` chart,
+  `allowedNamespaces` in its `mongodb` chart. That change is the user's, in Rankwarden.
+- **Order.**
+  1. `create-secrets.sh` creates the namespace, `redis-auth`, `soulseeker-app` and `ghcr`.
+     It is idempotent and keeps generated passwords and keys.
+  2. `deploy.sh <image tag>` installs the Redis release, waits for it, then installs the
+     Soulseeker release and waits. `SKIP_REDIS=1` skips the Redis release.
+- **Overrides** without editing charts: `REDIS_HELM_ARGS`, `SOULSEEKER_HELM_ARGS`. For one
+  setting, `--set-string envOverrides.KEY=value`, e.g. adding a dev origin to `CORS_ORIGINS`.
+- **Charts.**
+  - `soulseeker`:
+    - Deployment.
+    - HPA: 2–6 replicas at 70% CPU. `autoscaling.enabled=false` falls back to `replicas`.
+    - PDB: `minAvailable: 1` whenever at least two replicas run.
+    - ConfigMap from `env/production.env`. A credential there fails the render.
+    - HTTPRoute for `api.rankwarden.gg`, with `/health/ready` redirected to `/health`.
+    - NetworkPolicy admitting the gateway namespace only.
+  - `redis`:
+    - A one-node StatefulSet with AOF on a 1 GiB volume, `volatile-lru` at 256 MB.
+    - Password from `redis-auth`.
+    - A NetworkPolicy for labelled clients only.
+- **Checking a deploy.** Run `kubectl -n soulseeker get pods,hpa,pdb`, then a port-forward
+  and the first rows of §13.4:
+  - `/health/ready` must show `mongo` and `redis` `ok`;
+  - a token must issue with the production origin and resource;
+  - one PvP and one PvE character page must show their sync in Rankwarden's log.
+- **Redis by hand.** The Secret is base64: decode it, and never print it. There is no named
+  user: authenticate as `default`. A port-forward bypasses the NetworkPolicy.
+- **Validated in CI**: Helm lint and render with `--namespace soulseeker`, the scripts parse,
+  and `env/production.env` passes `config-check`.
+- **Not yet verified**: HPA scaling (no metrics-server locally), the Gateway and HTTPRoute,
+  DigitalOcean storage, GHCR pulls, and the workflows.

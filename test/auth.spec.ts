@@ -5,6 +5,7 @@ import {
   bootTestApp,
   getJson,
   resetRedis,
+  TEST_ORIGIN,
   tokenRequest,
   type TestApp,
 } from './support/app.js';
@@ -70,6 +71,70 @@ describe('anonymous OAuth session', () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: 'access_denied' });
+  });
+
+  it('refuses a foreign Origin with the same 403, for both grants and the preflight', async () => {
+    const foreign = { origin: 'https://evil.example' };
+
+    const anonymous = await tokenRequest(
+      app,
+      { grant_type: 'urn:soulseeker:grant-type:anonymous' },
+      foreign,
+    );
+    expect(anonymous.status).toBe(403);
+    expect(await anonymous.json()).toEqual({
+      error: 'access_denied',
+      error_description: 'origin not allowed',
+    });
+
+    const { refresh_token } = await anonymousTokens(app);
+    for (const headers of [foreign, {}]) {
+      const refresh = await tokenRequest(
+        app,
+        { grant_type: 'refresh_token', refresh_token },
+        headers,
+      );
+      expect(refresh.status).toBe(403);
+      expect(await refresh.json()).toMatchObject({ error: 'access_denied' });
+    }
+
+    const preflight = await fetch(`${app.url}/oidc/token`, {
+      method: 'OPTIONS',
+      headers: { ...foreign, 'access-control-request-method': 'POST' },
+    });
+    expect(preflight.status).toBe(403);
+    expect(preflight.headers.get('access-control-allow-origin')).toBeNull();
+
+    // The refused requests spent nothing: the refresh token still works.
+    const refreshed = await tokenRequest(app, { grant_type: 'refresh_token', refresh_token });
+    expect(refreshed.status).toBe(200);
+  });
+
+  it('answers the preflight of an allowed Origin', async () => {
+    const preflight = await fetch(`${app.url}/oidc/token`, {
+      method: 'OPTIONS',
+      headers: { origin: TEST_ORIGIN, 'access-control-request-method': 'POST' },
+    });
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe(TEST_ORIGIN);
+  });
+
+  it('issues tokens for the API resource only', async () => {
+    const grant = (resource?: string) =>
+      tokenRequest(app, {
+        grant_type: 'urn:soulseeker:grant-type:anonymous',
+        ...(resource === undefined ? {} : { resource }),
+      });
+
+    expect((await grant()).status).toBe(200);
+    expect((await grant('https://api.rankwarden.local')).status).toBe(200);
+
+    for (const resource of ['https://evil.example', 'urn:x', 'https://api.rankwarden.local/']) {
+      const refused = await grant(resource);
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toMatchObject({ error: 'invalid_target' });
+    }
   });
 
   it('rotates the refresh token, and revokes the session when an old one is replayed', async () => {

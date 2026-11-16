@@ -55,6 +55,7 @@ export class MplusRunService {
       `pve:mplus-run:${season}:${query.keystoneRunId}`,
       () => this.fetch(season, query.keystoneRunId),
       this.cacheTtlSeconds,
+      { acrossReplicas: true },
     );
 
     if (!run) {
@@ -94,7 +95,7 @@ export class MplusRunService {
       const spent = budgetErrorOf(error);
       if (spent) {
         this.logger.warn(`Run ${season}/${keystoneRunId} not fetched: ${spent.message}`);
-        throw new BudgetSpentException('Raider.io');
+        throw new BudgetSpentException('Raider.io', 'this run');
       }
       this.logger.warn(`Run ${season}/${keystoneRunId} not fetched: ${describeError(error)}`);
       throw new BadGatewayException('Raider.io could not be reached; retry later.');

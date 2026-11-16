@@ -17,7 +17,6 @@ import { RunKind } from '../../common/logging/run-kind.js';
 import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { budgetErrorOf } from '../../common/quota/request-budget.js';
 import { describeError } from '../../common/utils/errors.js';
-import { SingleFlight } from '../../common/utils/single-flight.js';
 import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
@@ -26,6 +25,7 @@ import type { RaiderIoCharacterPayload } from '../../raiderio/schemas/character-
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
+import { SharedFlight, type Flight } from '../../redis/shared-flight.service.js';
 import { CurrentSeasons } from '../../seasons/current-seasons.service.js';
 import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import {
@@ -77,8 +77,6 @@ export class PveCharacterService {
   private readonly ttlMs: number;
   private readonly keepSeconds: number;
   private readonly cooldownSeconds: number;
-  /** One upstream request per set of parts at a time on this replica. */
-  private readonly flights = new SingleFlight();
 
   constructor(
     private readonly raiderIo: RaiderIoCharacterApi,
@@ -89,6 +87,7 @@ export class PveCharacterService {
     private readonly sync: RankwardenSyncClient,
     private readonly mongo: MongoService,
     private readonly currentSeasons: CurrentSeasons,
+    private readonly flights: SharedFlight,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVE_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -154,36 +153,60 @@ export class PveCharacterService {
           : seasonFields(query.mplusSeasonScore!),
     );
 
-    // Before the push this fetch leads to, in parallel with Raider.io.
-    const stored = missing.includes('full') ? this.storedScore(query) : null;
-
-    let payload: RaiderIoCharacterPayload | null;
-    const fetchedAt = new Date();
+    // One Raider.io request for these parts across every replica: the same new
+    // page asked on two replicas at once is fetched, and pushed, once.
+    let flight: Flight<Fetched | null>;
     try {
-      payload = await this.flights.run(`${id}|${fields.join(',')}`, () =>
-        this.raiderIo.getProfile(query.region, query.realmSlug, query.characterName, fields),
+      flight = await this.flights.run<Fetched | null>(
+        `pve:character:${id}|${fields.join(',')}`,
+        async () => {
+          const fetchedAt = new Date();
+          // The score before the push this fetch leads to, in parallel with Raider.io.
+          const [payload, stored] = await Promise.all([
+            this.raiderIo.getProfile(query.region, query.realmSlug, query.characterName, fields),
+            missing.includes('full') ? this.storedScore(query) : Promise.resolve(null),
+          ]);
+          if (!payload) return null;
+
+          const fresh: AnswerParts = {};
+          if (missing.includes('full')) {
+            fresh.full = fullPartOf(payload, fetchedAt, previousScoreOf(stored, payload));
+          }
+          if (missing.includes('raid')) {
+            fresh.raid = raidPartOf(payload, query.raidProgression!, fetchedAt);
+          }
+          if (missing.includes('season')) fresh.season = seasonPartOf(payload, fetchedAt);
+
+          // Stored before the flight ends, so a replica waiting on it finds them.
+          await this.cache.setMany(
+            new Map(missing.map((name) => [keys[name]!, fresh[name]])),
+            this.keepSeconds,
+          );
+
+          return { fresh, payload };
+        },
+        async () => {
+          const stored = await this.cache.getMany<AnswerParts[PartName]>(
+            missing.map((name) => keys[name]!),
+          );
+          if (!missing.every((name, i) => newerThan(stored[i], cached[name]))) return null;
+
+          return {
+            fresh: Object.fromEntries(missing.map((name, i) => [name, stored[i]])) as AnswerParts,
+            payload: null,
+          };
+        },
       );
     } catch (error) {
       return this.fallback(query, names, cached, await extras(), error);
     }
 
-    if (!payload) throw new NotFoundException('No such character');
+    if (!flight.value) throw new NotFoundException('No such character');
+    const { fresh, payload } = flight.value;
 
-    const fresh: AnswerParts = {};
-    if (missing.includes('full')) {
-      fresh.full = fullPartOf(payload, fetchedAt, previousScoreOf(await stored, payload));
-    }
-    if (missing.includes('raid')) {
-      fresh.raid = raidPartOf(payload, query.raidProgression!, fetchedAt);
-    }
-    if (missing.includes('season')) fresh.season = seasonPartOf(payload, fetchedAt);
-
-    await this.cache.setMany(
-      new Map(missing.map((name) => [keys[name]!, fresh[name]])),
-      this.keepSeconds,
-    );
-
-    if (fresh.full) this.pushAfterResponse(query, payload);
+    // Only the caller that fetched the page pushes it: a second push would rotate
+    // Rankwarden's `previousMythicScore` again.
+    if (fresh.full && flight.loaded && payload) this.pushAfterResponse(query, payload);
 
     return responseOf(
       query.region,
@@ -247,23 +270,32 @@ export class PveCharacterService {
     const region = query.region;
 
     try {
-      return await this.flights.run(key, async () => {
-        const fetchedAt = new Date();
-        const [payload, raids] = await Promise.all([
-          // English: bosses are matched to the catalogue by name.
-          this.profiles.getRaidEncounters(
-            region,
-            query.realmSlug,
-            query.characterName,
-            DEFAULT_LOCALE,
-          ),
-          this.catalogue.raids(),
-        ]);
-        const part = bossesPartOf(payload ?? { expansions: [] }, raids, fetchedAt);
-        await this.cache.set(key, part, this.keepSeconds);
+      const flight = await this.flights.run(
+        key,
+        async () => {
+          const fetchedAt = new Date();
+          const [payload, raids] = await Promise.all([
+            // English: bosses are matched to the catalogue by name.
+            this.profiles.getRaidEncounters(
+              region,
+              query.realmSlug,
+              query.characterName,
+              DEFAULT_LOCALE,
+            ),
+            this.catalogue.raids(),
+          ]);
+          const part = bossesPartOf(payload ?? { expansions: [] }, raids, fetchedAt);
+          await this.cache.set(key, part, this.keepSeconds);
 
-        return part;
-      });
+          return part;
+        },
+        async () => {
+          const stored = await this.cache.get<BossesPart>(key);
+          return newerThan(stored, cached) ? stored : null;
+        },
+      );
+
+      return flight.value;
     } catch (error) {
       this.logger.warn(
         `Raid bosses of ${query.region}/${query.realmSlug}/${query.characterName} not read: ` +
@@ -310,7 +342,7 @@ export class PveCharacterService {
 
     if (spent) {
       this.logger.warn(`No page for ${id}: ${spent.message}`);
-      throw new BudgetSpentException('Raider.io');
+      throw new BudgetSpentException('Raider.io', 'this character');
     }
 
     this.logger.warn(`Raider.io lookup of ${id} failed: ${describeError(error)}`);
@@ -343,6 +375,20 @@ export class PveCharacterService {
       });
     });
   }
+}
+
+/** The parts one Raider.io request produced, and the payload to push (only for the caller that fetched it). */
+interface Fetched {
+  fresh: AnswerParts;
+  payload: RaiderIoCharacterPayload | null;
+}
+
+/** A part stored after the one this caller found: another caller's fresh load. */
+function newerThan(
+  part: { fetchedAt: string } | null | undefined,
+  seen: { fetchedAt: string } | null | undefined,
+): boolean {
+  return Boolean(part) && (!seen || Date.parse(part!.fetchedAt) > Date.parse(seen.fetchedAt));
 }
 
 /**

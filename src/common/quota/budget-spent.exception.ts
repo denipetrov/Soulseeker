@@ -9,13 +9,20 @@ export const BUDGET_RETRY_AFTER_SECONDS = 60;
 
 /**
  * A 503 for an upstream budget that is spent while nothing is cached to serve
- * instead. Carries its Retry-After, which the controller sets as a header.
+ * instead. `BudgetSpentFilter` turns it into the response, with its
+ * Retry-After, for every route alike.
  */
 export class BudgetSpentException extends ServiceUnavailableException {
+  /**
+   * @param upstream `Blizzard` or `Raider.io`.
+   * @param subject What has no cached copy, for the message: `this character`,
+   *   `this guild`, `this run`.
+   */
   constructor(
     upstream: string,
+    subject = 'this answer',
     readonly retryAfterSeconds = BUDGET_RETRY_AFTER_SECONDS,
   ) {
-    super(`The ${upstream} request budget is spent and this character is not cached; retry later.`);
+    super(`The ${upstream} request budget is spent and ${subject} is not cached; retry later.`);
   }
 }
