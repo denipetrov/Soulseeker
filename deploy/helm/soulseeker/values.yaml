@@ -1,6 +1,6 @@
 # Defaults are the production values for DigitalOcean Kubernetes. Deployed to
-# the `backend` namespace: Rankwarden's NetworkPolicies already admit it to the
-# sync endpoints and to MongoDB.
+# the `soulseeker` namespace, which Rankwarden's NetworkPolicies must admit to
+# its sync endpoints and to MongoDB (`allowedNamespaces` in its two charts).
 
 image:
   repository: ghcr.io/denipetrov/soulseeker
@@ -14,7 +14,18 @@ imagePullSecrets:
 
 # Unlike Rankwarden, any number: every piece of shared state — budgets, rate
 # limits, OAuth grants, cache — is in Redis, so replicas are interchangeable.
+# Used only with autoscaling off; with it on, the HPA owns the count.
 replicas: 2
+
+# HorizontalPodAutoscaler on CPU (of `resources.requests.cpu`). Needs the
+# cluster's metrics-server; DigitalOcean Kubernetes runs one.
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  # Off: memory follows the heap ceiling, not load. Set a percentage to add it.
+  targetMemoryUtilizationPercentage: null
 
 # Non-secret configuration: an env file inside this chart, turned into the
 # ConfigMap. Every production setting is reviewable in git.
@@ -57,13 +68,14 @@ httpRoute:
       sectionName: https
 
 # Who may open a connection: the namespaces the gateway's data plane runs in.
-# Everything else, other pods in `backend` included, is refused. Kubelet
+# Everything else, other pods in `soulseeker` included, is refused. Kubelet
 # probes come from the node and are not subject to it.
 networkPolicy:
   enabled: true
   allowedNamespaces:
     - gateway
 
+# Applied whenever at least two replicas run: `replicas`, or the HPA's minimum.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1

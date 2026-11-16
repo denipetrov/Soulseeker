@@ -13,7 +13,7 @@ access token issued by Soulseeker itself.
 | Writes | Redis (cache, budgets, rate limits, OAuth state); Rankwarden's sync endpoints |
 | Upstreams | Blizzard Profile API and Raider.io, **with its own credentials and budget** |
 | Auth | OAuth 2.0 authorization server at `/oidc` (oidc-provider); anonymous sessions now, Battle.net login later |
-| Hosting | DigitalOcean Kubernetes, namespace `backend`, 2+ replicas behind the Gateway API |
+| Hosting | DigitalOcean Kubernetes, namespace `soulseeker`, 2+ replicas behind the Gateway API |
 
 **State of the code:** a runnable skeleton. Configuration, logging, health, MongoDB,
 Redis, both upstream clients with their budgets, the Rankwarden sync client and OAuth

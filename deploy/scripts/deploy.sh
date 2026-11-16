@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 #
-# Deploys Redis, then Soulseeker, to the `backend` namespace:
+# Deploys Redis, then Soulseeker, to the `soulseeker` namespace:
 #
 #   1. Redis        StatefulSet up and ready (no rollback: a datastore is never
 #                   rolled back automatically)
 #   2. Soulseeker   rolling update; rolled back if the new pods never get ready
 #
 # Rankwarden is deployed separately, by its own pipeline. Soulseeker reads its
-# MongoDB and calls its sync endpoints; both admit the `backend` namespace.
+# MongoDB and calls its sync endpoints; both must admit the `soulseeker`
+# namespace (`allowedNamespaces` in Rankwarden's rankwarden and mongodb charts).
 #
 # Usage:
 #   deploy/scripts/deploy.sh <image-tag>
 #
 # Environment:
-#   NAMESPACE (backend)
+#   NAMESPACE (soulseeker)
 #   REDIS_HELM_ARGS, SOULSEEKER_HELM_ARGS   extra arguments for each release
 #   SKIP_REDIS=1                            leave the Redis release alone
 
@@ -25,7 +26,7 @@ if [ -z "$IMAGE_TAG" ]; then
   exit 1
 fi
 
-NAMESPACE="${NAMESPACE:-backend}"
+NAMESPACE="${NAMESPACE:-soulseeker}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 for tool in kubectl helm; do

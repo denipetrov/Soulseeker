@@ -13,7 +13,7 @@
 # Optional:
 #   GHCR_USERNAME  GHCR_TOKEN     pull secret for the image registry
 #   TURNSTILE_SECRET              when TURNSTILE_ENABLED=true
-#   NAMESPACE (backend)  RANKWARDEN_NAMESPACE (rankwarden)  REDIS_RELEASE (redis)
+#   NAMESPACE (soulseeker)  RANKWARDEN_NAMESPACE (rankwarden)  REDIS_RELEASE (redis)
 #
 # Generated here once and kept on every later run, read back from the cluster:
 #   the Redis password, the OAuth signing key and the cookie keys. Replacing the
@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-NAMESPACE="${NAMESPACE:-backend}"
+NAMESPACE="${NAMESPACE:-soulseeker}"
 RANKWARDEN_NAMESPACE="${RANKWARDEN_NAMESPACE:-rankwarden}"
 REDIS_RELEASE="${REDIS_RELEASE:-redis}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
