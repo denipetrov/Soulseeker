@@ -45,6 +45,7 @@ export class MplusCutoffsService {
       `pve:mplus-cutoffs:${season}:${query.region}`,
       () => this.fetch(season, query.region),
       this.cacheTtlSeconds,
+      { acrossReplicas: true },
     );
 
     if (!analysis) {
@@ -66,7 +67,7 @@ export class MplusCutoffsService {
       const spent = budgetErrorOf(error);
       if (spent) {
         this.logger.warn(`Cutoffs ${season}/${region} not fetched: ${spent.message}`);
-        throw new BudgetSpentException('Raider.io');
+        throw new BudgetSpentException('Raider.io', 'this cutoff analysis');
       }
       this.logger.warn(`Cutoffs ${season}/${region} not fetched: ${describeError(error)}`);
       throw new BadGatewayException('Raider.io could not be reached; retry later.');

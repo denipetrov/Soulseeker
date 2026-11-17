@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import {
   ApiBadGatewayResponse,
   ApiBadRequestResponse,
@@ -11,9 +11,7 @@ import {
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
 
-import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { BEARER_AUTH } from '../../docs/swagger.js';
 import { ApiZodQuery } from '../../docs/zod-openapi.js';
@@ -173,15 +171,7 @@ export class PveCharacterController {
   async character(
     @Query(new ZodValidationPipe(pveCharacterQuerySchema, 'character query'))
     query: PveCharacterQuery,
-    @Res({ passthrough: true }) res: Response,
   ): Promise<PveCharacterResponse> {
-    try {
-      return await this.characters.character(query);
-    } catch (error) {
-      if (error instanceof BudgetSpentException) {
-        res.setHeader('Retry-After', String(error.retryAfterSeconds));
-      }
-      throw error;
-    }
+    return this.characters.character(query);
   }
 }

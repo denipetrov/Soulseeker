@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { describeError } from '../common/utils/errors.js';
 import type { Env } from '../config/env.schema.js';
 import { RedisService } from './redis.service.js';
+import { SharedFlight } from './shared-flight.service.js';
 
 /**
  * JSON values in Redis with a TTL, under `<prefix>cache:`.
@@ -22,6 +23,7 @@ export class CacheService {
 
   constructor(
     private readonly redis: RedisService,
+    private readonly flights: SharedFlight,
     config: ConfigService<Env, true>,
   ) {
     this.defaultTtlSeconds = config.get('CACHE_DEFAULT_TTL_SECONDS', { infer: true });
@@ -100,14 +102,33 @@ export class CacheService {
    * burst of visitors to the same profile costs one upstream request, not one
    * each. A loader resolving to null is not cached: "not found" is often a
    * character mid-transfer, and pinning it for a TTL would hide them.
+   *
+   * `acrossReplicas` extends that to every replica (`SharedFlight`), for
+   * loaders that spend an upstream budget. MongoDB-backed answers leave it off:
+   * the lock's round trips would cost more than the duplicate read.
    */
   async getOrLoad<T>(
     key: string,
     loader: () => Promise<T | null>,
     ttlSeconds = this.defaultTtlSeconds,
+    options: { acrossReplicas?: boolean } = {},
   ): Promise<T | null> {
     const cached = await this.get<T>(key);
     if (cached !== null) return cached;
+
+    if (options.acrossReplicas) {
+      const flight = await this.flights.run<T | null>(
+        `cache:${key}`,
+        async () => {
+          const value = await loader();
+          if (value !== null) await this.set(key, value, ttlSeconds);
+          return value;
+        },
+        () => this.get<T>(key),
+      );
+
+      return flight.value;
+    }
 
     const pending = this.inFlight.get(key) as Promise<T | null> | undefined;
     if (pending) return pending;

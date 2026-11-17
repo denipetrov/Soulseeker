@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { requiredNumber } from '../../../common/pipes/required-number.js';
+
 import { CORE_BRACKETS, SPEC_FAMILIES } from '../../seasons/pvp-season.types.js';
 import { pvpBoardSchema } from '../../world.js';
 
@@ -46,7 +48,7 @@ const slug = z
 export const leaderboardQuerySchema = z
   .object({
     region: pvpBoardSchema,
-    seasonId: z.coerce.number().int().positive().meta({
+    seasonId: requiredNumber(z.coerce.number().int().positive()).meta({
       description: 'Blizzard PvP season id. The live one reads current ratings.',
       example: 42,
     }),

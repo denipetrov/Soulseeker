@@ -117,8 +117,8 @@ jobs:
 
       - name: Render
         run: |
-          helm template redis deploy/helm/redis --namespace backend > /dev/null
-          helm template soulseeker deploy/helm/soulseeker --namespace backend --set image.tag=ci > /dev/null
+          helm template redis deploy/helm/redis --namespace soulseeker > /dev/null
+          helm template soulseeker deploy/helm/soulseeker --namespace soulseeker --set image.tag=ci > /dev/null
 
       - name: Deploy scripts parse
         run: for script in deploy/scripts/*.sh; do bash -n "$script"; done

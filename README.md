@@ -1,152 +1,202 @@
 # Soulseeker
 
-The backend for the front end of the Rankwarden data. It reads the ladders and
-characters that [Rankwarden](../Rankwarden) keeps in MongoDB, looks specific players up
-on demand from Blizzard and Raider.io, caches in Redis, and pushes fresh character data
-back to Rankwarden through its sync endpoints. Every API request carries an OAuth 2.0
-access token issued by Soulseeker itself.
+Soulseeker is the API behind the Rankwarden website. [Rankwarden](../Rankwarden) collects
+World of Warcraft rankings into MongoDB; Soulseeker turns that data into what the front
+end shows: PvP ladders, title cutoffs, tier lists, Mythic+ boards, raid races and
+character pages.
+
+What it reads, and what it does with it:
+
+- It **reads** Rankwarden's MongoDB, read-only.
+- It **looks up** single characters, guilds and runs on demand from Blizzard and Raider.io,
+  with its own API keys and request budgets.
+- It **caches** in Redis.
+- It **sends** fresh character data back to Rankwarden, so every page visit improves the
+  shared database.
+
+Every API call needs an OAuth 2.0 access token, which Soulseeker issues itself.
 
 | | |
 | --- | --- |
-| Runtime | Node 24, NestJS 12, TypeScript ESM |
+| Runtime | Node 24, NestJS 12, TypeScript (ESM) |
 | Reads | MongoDB `rankwarden`, as the read-only `rankwarden_backend` user |
-| Writes | Redis (cache, budgets, rate limits, OAuth state); Rankwarden's sync endpoints |
-| Upstreams | Blizzard Profile API and Raider.io, **with its own credentials and budget** |
-| Auth | OAuth 2.0 authorization server at `/oidc` (oidc-provider); anonymous sessions now, Battle.net login later |
-| Hosting | DigitalOcean Kubernetes, namespace `backend`, 2+ replicas behind the Gateway API |
+| Writes | Redis (cache, budgets, rate limits, OAuth state); Rankwarden's two sync endpoints |
+| Upstreams | Blizzard Profile API and Raider.io, **with Soulseeker's own credentials and budget** |
+| Auth | OAuth 2.0 server at `/oidc`; anonymous sessions now, Battle.net login later |
+| Hosting | DigitalOcean Kubernetes, namespace `soulseeker`, 2–6 replicas behind the Gateway API, public at `api.rankwarden.gg` |
 
-**State of the code:** a runnable skeleton. Configuration, logging, health, MongoDB,
-Redis, both upstream clients with their budgets, the Rankwarden sync client and OAuth
-are wired and tested. The front-end endpoints so far are search suggestions
-(`src/search/`), the PvP leaderboard, spec representation and the PvP character page
-(`src/pvp/`), and the PvE character page (`src/pve/`).
+## Documentation
 
-## How a request is handled
-
-1. On first load the front end gets a token pair from `POST /oidc/token` with
-   `grant_type=urn:soulseeker:grant-type:anonymous`. That request must come from an
-   allowed `Origin`, is limited per IP, and can require a Cloudflare Turnstile token.
-2. Every API call carries `Authorization: Bearer <access token>`. The token is an ES256
-   JWT (`at+jwt`) for the API resource, verified locally against the signing keys. It
-   lives 10 minutes.
-3. The front end renews it with `grant_type=refresh_token`. Refresh tokens rotate on
-   every use; presenting a used one revokes the whole session.
-4. Each API call is rate-limited per session and per IP (Redis, shared by replicas).
-5. Data comes from MongoDB first, then the Redis cache, then Blizzard or Raider.io.
-   Every upstream attempt is charged to Soulseeker's own budget in Redis. A spent
-   budget fails at once with `BudgetExhaustedError`, and the caller serves stored data.
-6. Fresh data goes back to Rankwarden (`POST /characters/sync`,
-   `POST /mplus/characters/sync`) after the response is sent. A 409 is retried with
-   backoff.
+| Document | For |
+| --- | --- |
+| [Soulseeker Handbook](https://claude.ai/artifact/NinpdHpweHpZmjF6N5kmxv) (online) | Everyone. Every endpoint with its parameters and response, the architecture, configuration and deployment. |
+| Swagger UI at `/docs` | Trying the API from a browser, outside production (see below) |
+| [SKILLS.md](SKILLS.md) | Agents and maintainers: every decision, trap and test recipe in detail |
+| [deploy/README.md](deploy/README.md) | Deploying to a cluster |
 
 ## Getting started
 
+You need Node 24, Docker, and a GitHub token with `read:packages` in `~/.npmrc` for the
+private `@denipetrov/*` packages. MongoDB is Rankwarden's: start Rankwarden's own
+compose file first, or use the standalone MongoDB below.
+
 ```bash
-cp .env.example .env            # fill in BLIZZARD_* and RAIDER_IO_API_KEY (Soulseeker's own)
-npm run keys:generate >> .env   # optional locally: a lasting OAuth signing key
-npm install                     # needs a read:packages token for @denipetrov/* in ~/.npmrc
-npm run db:up                   # Redis; MongoDB is Rankwarden's (or: npm run db:up:standalone)
+cp .env.example .env            # fill in BLIZZARD_* and RAIDER_IO_API_KEY (Soulseeker's own, never Rankwarden's)
+npm run keys:generate >> .env   # optional locally: a lasting OAuth signing key, so tokens survive restarts
+npm install
+npm run db:up                   # Redis (add MongoDB with: npm run db:up:standalone)
 npm run start:dev               # http://localhost:3001
 ```
 
-Or in Docker, with the same `.env`:
+Check it is up, get a token, and call the API:
+
+```bash
+curl localhost:3001/health/ready
+
+curl -X POST localhost:3001/oidc/token -H 'Origin: http://localhost:5173' \
+  -d grant_type=urn:soulseeker:grant-type:anonymous -d client_id=soulseeker-web
+# → { "access_token": "eyJ…", "refresh_token": "…", "expires_in": 600, … }
+
+curl -H "Authorization: Bearer <access_token>" \
+  "localhost:3001/pvp/leaderboard?region=eu&seasonId=42&bracket=3v3"
+```
+
+The token request must carry an `Origin` from `CORS_ORIGINS`, or it is refused with
+403 "origin not allowed".
+
+### In Docker
 
 ```bash
 npm run docker:build            # image soulseeker:local; finds the npm token and any extra CA itself
-npm run docker:up               # Redis + the app on :3001; MongoDB from the host
+npm run docker:up               # Redis + the app on :3001; MongoDB and Rankwarden from the host
 npm run docker:logs
 npm run docker:down
 ```
 
-On a machine whose antivirus or proxy re-signs HTTPS (Avast here), set
-`DOCKER_EXTRA_CA` in `.env` to its root certificate so the container can reach
+If an antivirus or proxy re-signs HTTPS on your machine (Avast does), set
+`DOCKER_EXTRA_CA` in `.env` to its root certificate, or the container cannot reach
 Blizzard and Raider.io.
 
-```bash
-curl localhost:3001/health/ready
-curl -H 'Origin: http://localhost:5173' -X POST localhost:3001/oidc/token \
-  -d 'grant_type=urn:soulseeker:grant-type:anonymous&client_id=soulseeker-web'
-curl -H "Authorization: Bearer <access_token>" localhost:3001/session
-```
+### Swagger UI
+
+Outside production, **http://localhost:3001/docs** documents every route.
+
+1. Open `POST /oidc/token`, press **Try it out**, then **Execute**. The defaults are the
+   anonymous grant.
+2. Copy `access_token` from the response.
+3. Press **Authorize** and paste the token. Every other route can now be tried. A token
+   lasts 10 minutes; repeat step 1 for a new one.
+
+## How a request is handled
+
+1. The front end gets a token pair from `POST /oidc/token` with the anonymous grant. The
+   request must come from an allowed `Origin`, is limited per IP, and can require a
+   Cloudflare Turnstile token.
+2. Every API call carries `Authorization: Bearer <access token>`, an ES256 JWT that is
+   checked locally. It lives 10 minutes and is renewed with the refresh token, which
+   rotates on every use.
+3. Each call is rate-limited per session and per IP, in Redis, so every replica shares the
+   count.
+4. Query parameters are validated. A bad one answers 400 and lists every problem.
+5. Data comes from MongoDB, then the Redis cache, then Blizzard or Raider.io. Every
+   upstream request is charged to Soulseeker's budget first. When the budget is spent, a
+   cached copy is served (`"stale": true`), or the answer is 503 with `Retry-After`.
+6. Fresh character data goes to Rankwarden (`POST /characters/sync`,
+   `POST /mplus/characters/sync`).
 
 ## Endpoints
 
-| Route | Auth | Purpose |
-| --- | --- | --- |
-| `POST /oidc/token` | Origin + rate limit | Anonymous grant, `refresh_token` grant |
-| `GET /oidc/.well-known/openid-configuration`, `/oidc/jwks` | none | Discovery and public keys |
-| `POST /oidc/token/revocation` | none | Revoke a refresh token (logout) |
-| `GET /session` | token | Who the token says the caller is |
-| `GET /search/suggestions?type=pvp&q=…` (or `type=pve`) | token | Name suggestions as the visitor types: PvP characters, or Mythic+ characters and guilds; accent- and case-insensitive |
-| `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | token | A PvP ladder page: live ratings enriched from `characters`, or a finished season's archive; optional `class`/`spec` for the current season |
-| `GET /pvp/cutoffs?region=eu&bracket=shuffle` | token | The current season's title cutoffs (per spec on Shuffle and Blitz) and how many of each spec reach them |
-| `GET /pvp/tier-list?region=eu&bracket=shuffle` | token | Each spec of the current season's ladder scored 0–100 and ranked S to D |
-| `GET /pvp/hero-talents?region=world&bracket=3v3&top=50` | token | Which hero talent trees each spec's top characters play, by class |
-| `GET /pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | token | Every stored day of the last 31, oldest first: each spec's count and share, for a graph over time |
-| `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20` | token | Which specs are played at or above a rating on one day; `getEarliestDate=true` adds the first day with data |
-| `GET /pvp/character?region=us&realmSlug=demon-soul&characterName=Manongauz&locale=en_US` | token | One PvP character from Blizzard: profile, ladders, talents, stats, equipment, render and PvP titles; cached 6 h, `forceRefresh=true` once per 5 min; pushes the ratings to Rankwarden |
-| `GET /pve/character?region=us&realmSlug=demon-soul&characterName=Manongauz` | token | One PvE character from Raider.io: gear, talents, guild, current raids, M+ scores, ranks and best runs; `raidProgression=<raid>` and/or `mplusSeasonScore=<season>` for just those; cached 1 h, `forceRefresh=true` once per 5 min; pushes the season's runs to Rankwarden |
-| `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | token | One guild from Raider.io, one widget per call: the summary (current raids' progression and rankings, ranks 0–1), `showFullRoster=true` (never cached), `raidEncounters=<raid>&difficulty=<difficulty>`, or the same plus `boss=<boss>` for that kill with its roster; cached 1 h, boss kills 24 h |
-| `GET /pve/raids` | token | Every raid Rankwarden catalogues: bosses, icon, regional start and end dates |
-| `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row&page=1` | token | The Mythic+ run board, paged; past seasons from the archive |
-| `GET /pve/mplus-cutoffs?region=world&season=current` | token | A Mythic+ season's percentile cutoffs, day by day (Raider.io's cutoff analysis) |
-| `GET /pve/mplus-run?keystoneRunId=19324786` | token | One Mythic+ run from Raider.io: dungeon, level, score, times, affixes, roster |
-| `GET /pve/mplus-compositions?region=world&season=current&dungeon=murder-row&top=1000` | token | The 50 most played party compositions among a board's best runs |
-| `GET /pve/spec-representation?region=world&dungeonSlug=all&season=current&getSeasons=true` | token | Which specs a Mythic+ season's best runs were played with, per region and dungeon |
-| `GET /pve/tier-list?region=world` | token | Each Mythic+ spec of the current season scored 0–100 and ranked S to D, as the PvP tier list |
-| `GET /pve/mplus-seasons` | token | Every Mythic+ season with its dungeons and cutoffs, and every affix |
-| `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane&page=1` | token | The Mythic+ character leaderboard, paged; past seasons from the archive |
-| `GET /pve/raid?raidSlug=the-venomous-abyss&region=world&difficulty=mythic` | token | One raid and its top hundred guilds for a region and difficulty, with every boss pulled and killed |
-| `GET /pve/bosses?region=world&raidSlug=current&top=10` | token | The first guilds to kill each boss of a raid, or of one boss, per region and difficulty |
-| `GET /health` | none | Liveness: process only |
-| `GET /health/ready` | none | Readiness: 503 if MongoDB or Redis is down; upstreams only degrade it |
+All need a token except health and `/oidc`. Full parameters and responses are in the
+[handbook](https://claude.ai/artifact/NinpdHpweHpZmjF6N5kmxv).
 
-## API docs
+**Platform**
 
-Outside production, Swagger UI is at **http://localhost:3001/docs** (the spec at
-`/docs/openapi.json`); in production both are absent.
+| Route | Purpose |
+| --- | --- |
+| `POST /oidc/token` | Anonymous grant and `refresh_token` grant (Origin-checked, rate-limited) |
+| `GET /oidc/.well-known/openid-configuration`, `/oidc/jwks` | Discovery and public keys |
+| `POST /oidc/token/revocation` | Revoke a refresh token (logout) |
+| `GET /session` | Who the token says the caller is |
+| `GET /health`, `GET /health/ready` | Liveness; readiness (503 if MongoDB or Redis is down) |
+| `GET /search/suggestions?type=pvp&q=biba` | Name suggestions while typing: PvP characters, or Mythic+ characters and guilds |
 
-1. Open `POST /oidc/token` and press **Try it out**, then **Execute**. The defaults are
-   the anonymous grant.
-2. Copy `access_token` from the response.
-3. Press **Authorize**, paste the token, and every other route can then be tried. A
-   token lasts 10 minutes; repeat step 1 for a new one.
+**PvP**
+
+| Route | Purpose |
+| --- | --- |
+| `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | A ladder page, live or archived; optional `class`/`spec` |
+| `GET /pvp/cutoffs?region=eu&bracket=shuffle` | Title cutoffs and how many of each spec reach them; with `class`+`spec`, the characters |
+| `GET /pvp/tier-list?region=eu&bracket=shuffle` | Every spec scored 0–100 and ranked S to D |
+| `GET /pvp/hero-talents?region=world&bracket=3v3&top=50` | Hero talent trees of each spec's top players |
+| `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=latest` | Spec shares at a rating on one day; `getEarliestDate=true` for the calendar |
+| `GET /pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | The last 31 days of spec shares |
+| `GET /pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | One character from Blizzard; syncs ratings to Rankwarden |
+
+Every PvP board also takes `region=world`: all regions together.
+
+**PvE**
+
+| Route | Purpose |
+| --- | --- |
+| `GET /pve/character?region=us&realmSlug=illidan&characterName=Bondd` | One character from Raider.io (whole page, or `raidProgression` / `mplusSeasonScore`); syncs runs |
+| `GET /pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo` | One guild widget: summary, `showFullRoster`, a raid, or one boss kill |
+| `GET /pve/raids` | Every catalogued raid |
+| `GET /pve/raid?raidSlug=current&region=world&difficulty=mythic` | One raid's top 100 guilds |
+| `GET /pve/bosses?region=world&raidSlug=current&top=10` | The first guilds to kill each boss |
+| `GET /pve/mplus-seasons` | Every Mythic+ season with dungeons and cutoffs, and every affix |
+| `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane` | Mythic+ characters by score, paged |
+| `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row` | Mythic+ runs by score, paged |
+| `GET /pve/mplus-run?keystoneRunId=19324786` | One run's details and roster, from Raider.io |
+| `GET /pve/mplus-compositions?region=world&top=1000` | The 50 most played party compositions |
+| `GET /pve/spec-representation?region=world&dungeonSlug=all&season=current` | Spec shares in a season's best runs |
+| `GET /pve/tier-list?region=world` | Every Mythic+ spec scored 0–100 and ranked S to D |
+| `GET /pve/mplus-cutoffs?region=world&season=current` | Percentile cutoffs, day by day (Raider.io) |
 
 ## Testing
 
-| Command | Covers | Needs |
+| Command | What it runs | Needs |
 | --- | --- | --- |
-| `npm test` | `src/**/*.spec.ts`: schema, budgets, keys, sync client | nothing |
-| `npm run test:int` | `test/**/*.spec.ts`: the real app, real MongoDB and Redis, a fake upstream server | MongoDB, Redis |
-| `npm run test:all` | both | |
+| `npm test` | Unit tests, `src/**/*.spec.ts` | nothing |
+| `npm run test:int` | Integration tests, `test/**/*.spec.ts`: the real app on real MongoDB and Redis, with fake upstreams | `npm run db:up` (and a MongoDB) |
+| `npm run test:all` | Both | |
+| `npm run typecheck` / `npm run lint` | TypeScript and ESLint | |
 
-Test databases are `soulseeker_test_*` and Redis keys `sstest_*`; the harness refuses
-anything else, and upstream hosts default to a dead local port.
+Tests use only `soulseeker_test_*` databases and `sstest_*` Redis keys, and every
+upstream points at a local fake, so they never touch your data or spend real quota.
 
 ## Deployment
 
-Not deployed yet: work happens locally and in Docker for now. The cluster setup is
-ready for when it is. `git tag v0.1.0 && git push --tags` publishes the image; the manual **Deploy** workflow
-runs `deploy/scripts/create-secrets.sh` and `deploy/scripts/deploy.sh <tag>`. See
-[deploy/README.md](deploy/README.md).
+Soulseeker deploys to the `soulseeker` namespace of the cluster Rankwarden runs in, as
+two Helm releases: `redis` and `soulseeker` (with an autoscaler, 2–6 replicas).
+
+```bash
+git tag v0.1.0 && git push --tags          # publishes the image
+# then run the Deploy workflow, or by hand:
+bash deploy/scripts/create-secrets.sh      # with BLIZZARD_*, RAIDER_IO_API_KEY, GHCR_* set
+bash deploy/scripts/deploy.sh v0.1.0
+```
+
+Rankwarden's network policies must admit the `soulseeker` namespace. See
+[deploy/README.md](deploy/README.md) for prerequisites, secrets and a local-cluster
+recipe.
 
 ## Layout
 
 ```
 src/
-  main.ts, configure-app.ts      bootstrap; middleware order (OIDC before the body parser)
-  config/                        env schema (zod), config module
-  common/                        logging, health providers, budgets, pipes, utils
-  database/                      read-only MongoDB, Rankwarden collection names
-  redis/                         connection, cache
-  auth/                          authorization server, access-token and rate-limit guards
-  blizzard/  raiderio/           upstream clients
-  rankwarden/                    sync client and mirrored request schemas
-  characters/                    read-side entities; feature endpoints go here
-  health/
-test/                            integration suite and harness
-deploy/                          Helm charts (soulseeker, redis), scripts
+  main.ts, configure-app.ts   bootstrap; middleware order (OIDC before the body parser)
+  config/                     environment schema (zod)
+  common/                     logging, health, upstream budgets, validation pipe, utils
+  database/                   read-only MongoDB; Rankwarden's collection and index names
+  redis/                      connection, cache, refresh cooldown
+  auth/                       OAuth server, access-token and rate-limit guards
+  blizzard/  raiderio/        upstream clients and their response schemas
+  rankwarden/                 sync client and mirrored request schemas
+  seasons/                    current seasons, raid and Mythic+ catalogue
+  search/                     /search/suggestions
+  pvp/                        PvP endpoints; specs.ts lists every class and spec
+  pve/                        PvE endpoints; shared/ holds the season resolver and guild join
+  health/  docs/              health endpoints; Swagger
+test/                         integration suite and its harness (test/support/)
+deploy/                       Helm charts (soulseeker, redis), scripts
 ```
-
-[SKILLS.md](SKILLS.md) is the reference for agents and the detail behind every decision
-here.

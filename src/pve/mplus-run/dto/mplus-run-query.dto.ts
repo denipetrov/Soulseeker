@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { requiredNumber } from '../../../common/pipes/required-number.js';
+
 import { slugSchema } from '../../bosses/dto/bosses-query.dto.js';
 
 /**
@@ -10,11 +12,10 @@ import { slugSchema } from '../../bosses/dto/bosses-query.dto.js';
  * run's own — Raider.io answers another season's run of the same id.
  */
 export const mplusRunQuerySchema = z.object({
-  keystoneRunId: z.coerce
-    .number()
-    .int()
-    .positive()
-    .meta({ description: 'The run, as `keystoneRunId` on `/pve/mplus-runs`.', example: 19324786 }),
+  keystoneRunId: requiredNumber(z.coerce.number().int().positive()).meta({
+    description: 'The run, as `keystoneRunId` on `/pve/mplus-runs`.',
+    example: 19324786,
+  }),
   season: slugSchema.optional().meta({
     description:
       "The run's season slug. Optional: found from the stored runs, else the current season.",

@@ -5,7 +5,11 @@ metadata:
   labels:
     {{- include "soulseeker.labels" . | nindent 4 }}
 spec:
+  # With autoscaling on, the HPA sets the count: a fixed one here would reset
+  # it to `replicas` on every release.
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicas }}
+  {{- end }}
   # New pods first, old ones after: the API stays up through a deploy. Safe
   # here, unlike in Rankwarden, because replicas share every budget in Redis.
   strategy:

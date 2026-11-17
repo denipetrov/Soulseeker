@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import {
   ApiBadGatewayResponse,
   ApiBadRequestResponse,
@@ -11,9 +11,7 @@ import {
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
 
-import { BudgetSpentException } from '../../common/quota/budget-spent.exception.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { BEARER_AUTH } from '../../docs/swagger.js';
 import { ApiZodQuery } from '../../docs/zod-openapi.js';
@@ -150,15 +148,7 @@ export class GuildController {
   })
   async guild(
     @Query(new ZodValidationPipe(guildQuerySchema, 'guild query')) query: GuildQuery,
-    @Res({ passthrough: true }) res: Response,
   ): Promise<GuildResponse> {
-    try {
-      return await this.guilds.guild(query);
-    } catch (error) {
-      if (error instanceof BudgetSpentException) {
-        res.setHeader('Retry-After', String(error.retryAfterSeconds));
-      }
-      throw error;
-    }
+    return this.guilds.guild(query);
   }
 }

@@ -1,11 +1,14 @@
-import type { KoaContextWithOIDC, Provider, ResourceServer } from 'oidc-provider';
+import { errors, type KoaContextWithOIDC, type Provider, type ResourceServer } from 'oidc-provider';
 
 import { ANONYMOUS_GRANT_TYPE, API_READ_SCOPE } from '../auth.constants.js';
 import type { AccountService } from './account.service.js';
 import type { IssuancePolicy } from './issuance-policy.service.js';
 
-/** Form parameters the anonymous grant accepts besides `grant_type`. */
-export const ANONYMOUS_GRANT_PARAMS = ['turnstile_token'];
+/**
+ * Form parameters the anonymous grant accepts besides `grant_type`. `resource`
+ * is optional and, when sent, must be the API (RFC 8707).
+ */
+export const ANONYMOUS_GRANT_PARAMS = ['turnstile_token', 'resource'];
 
 /**
  * `grant_type=urn:soulseeker:grant-type:anonymous` at the token endpoint.
@@ -23,6 +26,13 @@ export function anonymousGrantHandler(
   api: { resource: string; info: ResourceServer },
 ) {
   return async function anonymousGrant(ctx: KoaContextWithOIDC): Promise<void> {
+    // RFC 8707: a resource this server does not serve is refused, not ignored.
+    // Without one, the token is for the API, as before.
+    const requested = ctx.oidc.params?.resource;
+    if (requested !== undefined && requested !== api.resource) {
+      throw new errors.InvalidTarget('unknown resource');
+    }
+
     await policy.check(ctx);
 
     const client = ctx.oidc.client!;

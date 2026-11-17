@@ -108,10 +108,13 @@ const PAYLOADS: Record<string, unknown> = {
 const blizzard = () => app.upstream.requestsTo('/blizzard');
 const syncs = () => app.upstream.requestsTo('/rankwarden/characters/sync');
 
-async function lookup(query = ''): Promise<{ status: number; body: Json; headers: Headers }> {
+async function lookup(
+  query = '',
+  on: { url: string; token: string } = { url: app.url, token },
+): Promise<{ status: number; body: Json; headers: Headers }> {
   const response = await fetch(
-    `${app.url}/pvp/character?region=us&realmSlug=demon-soul&characterName=Manongauz${query}`,
-    { headers: { authorization: `Bearer ${token}` } },
+    `${on.url}/pvp/character?region=us&realmSlug=demon-soul&characterName=Manongauz${query}`,
+    { headers: { authorization: `Bearer ${on.token}` } },
   );
 
   return {
@@ -130,20 +133,20 @@ async function syncPosted(count = 1): Promise<RecordedRequest[]> {
   return syncs();
 }
 
+const ENV = {
+  RATE_LIMIT_API_PER_MINUTE: '1000',
+  BLIZZARD_HOURLY_LIMIT: '40',
+  BLIZZARD_PER_SECOND_LIMIT: '40',
+  BLIZZARD_UTILISATION: '1',
+  BLIZZARD_RETRY_LIMIT: '0',
+  // A held sync must not hold the page: the inline wait is short here, and
+  // a busy Rankwarden's background retries quick.
+  RANKWARDEN_SYNC_INLINE_TIMEOUT_MS: '300',
+  RANKWARDEN_SYNC_RETRY_BASE_MS: '20',
+};
+
 beforeAll(async () => {
-  app = await bootTestApp({
-    env: {
-      RATE_LIMIT_API_PER_MINUTE: '1000',
-      BLIZZARD_HOURLY_LIMIT: '40',
-      BLIZZARD_PER_SECOND_LIMIT: '40',
-      BLIZZARD_UTILISATION: '1',
-      BLIZZARD_RETRY_LIMIT: '0',
-      // A held sync must not hold the page: the inline wait is short here, and
-      // a busy Rankwarden's background retries quick.
-      RANKWARDEN_SYNC_INLINE_TIMEOUT_MS: '300',
-      RANKWARDEN_SYNC_RETRY_BASE_MS: '20',
-    },
-  });
+  app = await bootTestApp({ env: ENV });
   ({ db, drop } = await openTestDatabase(app.dbName));
 
   await db.collection('season_state').insertOne({
@@ -235,6 +238,45 @@ describe('GET /pvp/character', () => {
 
     expect(second.body).toEqual(first.body);
     expect(blizzard()).toHaveLength(FULL_LOOKUP);
+  });
+
+  it('loads a page asked twice at once on one replica once, and syncs it once', async () => {
+    const [a, b] = await Promise.all([lookup(), lookup()]);
+
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(a.body.brackets).toEqual(b.body.brackets);
+    expect(blizzard()).toHaveLength(FULL_LOOKUP);
+    await syncPosted(1);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(syncs()).toHaveLength(1);
+  });
+
+  it('loads a new page asked on two replicas at once once, and syncs it once', async () => {
+    // A second replica: the same upstream, database and Redis prefix.
+    const replica = await bootTestApp({ env: ENV, upstream: app.upstream });
+    try {
+      const other = { url: replica.url, token: (await anonymousTokens(replica)).access_token };
+      // Slow enough that both requests are in flight together.
+      app.upstream.route(async (request) => {
+        if (request.path !== CHARACTER) return undefined;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return { status: 200, body: PAYLOADS[''] };
+      });
+
+      const [a, b] = await Promise.all([lookup(), lookup('', other)]);
+
+      expect([a.status, b.status]).toEqual([200, 200]);
+      expect(b.body.character).toEqual(a.body.character);
+      expect(b.body.brackets.map((x: Json) => x.rating)).toEqual(
+        a.body.brackets.map((x: Json) => x.rating),
+      );
+      expect(blizzard()).toHaveLength(FULL_LOOKUP);
+      await syncPosted(1);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(syncs()).toHaveLength(1);
+    } finally {
+      await replica.close();
+    }
   });
 
   it('reads each previous rating after its own sync, as the sync left it', async () => {

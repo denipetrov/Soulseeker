@@ -9,7 +9,7 @@ import { ANONYMOUS_GRANT_TYPE, API_READ_SCOPE, SIGNING_ALG } from '../auth.const
 import type { AccountService } from './account.service.js';
 import { ANONYMOUS_GRANT_PARAMS, anonymousGrantHandler } from './anonymous.grant.js';
 import type { IssuancePolicy } from './issuance-policy.service.js';
-import { issuanceOrigins } from './issuance-origins.js';
+import { issuanceOrigins, tokenOriginGate } from './issuance-origins.js';
 import { redisAdapterFactory } from './oidc-redis.adapter.js';
 import type { SigningKeys } from './signing-keys.js';
 
@@ -120,6 +120,9 @@ export function createOidcProvider(
     provider.proxy = true;
     provider.app.maxIpsCount = hops;
   }
+
+  // Before the provider's own routing: see `tokenOriginGate`.
+  provider.use(tokenOriginGate(origins));
 
   provider.registerGrantType(
     ANONYMOUS_GRANT_TYPE,

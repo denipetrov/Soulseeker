@@ -1,6 +1,8 @@
 import { REPRESENTATION_MIN_RATINGS } from '@denipetrov/spirit-link/constants';
 import { z } from 'zod';
 
+import { requiredNumber } from '../../../common/pipes/required-number.js';
+
 import { CORE_BRACKETS, SPEC_FAMILIES } from '../../seasons/pvp-season.types.js';
 import { pvpBoardSchema } from '../../world.js';
 
@@ -25,17 +27,18 @@ export const representationQuerySchema = z.object({
     .toLowerCase()
     .pipe(z.enum(FAMILIES))
     .meta({ description: 'Ladder family.', enum: [...FAMILIES], example: '3v3' }),
-  rating: z.coerce
-    .number()
-    .int()
-    .refine((value) => (REPRESENTATION_MIN_RATINGS as readonly number[]).includes(value), {
-      message: `must be one of ${REPRESENTATION_MIN_RATINGS.join(', ')}`,
-    })
-    .meta({
-      description: 'Minimum rating: the snapshot counts players at or above it.',
-      enum: [...REPRESENTATION_MIN_RATINGS],
-      example: 2100,
-    }),
+  rating: requiredNumber(
+    z.coerce
+      .number()
+      .int()
+      .refine((value) => (REPRESENTATION_MIN_RATINGS as readonly number[]).includes(value), {
+        message: `must be one of ${REPRESENTATION_MIN_RATINGS.join(', ')}`,
+      }),
+  ).meta({
+    description: 'Minimum rating: the snapshot counts players at or above it.',
+    enum: [...REPRESENTATION_MIN_RATINGS],
+    example: 2100,
+  }),
   date: z
     .string()
     .trim()

@@ -1,9 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { APP_FILTER } from '@nestjs/core';
 import { DependencyHealthModule } from '@denipetrov/spirit-link/health';
 
 import type { Env } from '../config/env.schema.js';
 import { healthSecrets } from './health/upstream-provider.js';
+import { BudgetSpentFilter } from './quota/budget-spent.filter.js';
 import { BlizzardBudget, RaiderIoBudget } from './quota/budgets.js';
 
 @Global()
@@ -17,7 +19,7 @@ import { BlizzardBudget, RaiderIoBudget } from './quota/budgets.js';
       useFactory: (config: ConfigService<Env, true>) => ({ secrets: healthSecrets(config) }),
     }),
   ],
-  providers: [BlizzardBudget, RaiderIoBudget],
+  providers: [BlizzardBudget, RaiderIoBudget, { provide: APP_FILTER, useClass: BudgetSpentFilter }],
   exports: [BlizzardBudget, RaiderIoBudget],
 })
 export class CommonModule {}

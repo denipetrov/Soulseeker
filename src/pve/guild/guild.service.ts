@@ -16,6 +16,7 @@ import type { Env } from '../../config/env.schema.js';
 import { RaiderIoGuildApi } from '../../raiderio/guild.api.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
+import { SharedFlight } from '../../redis/shared-flight.service.js';
 import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import type { GuildQuery } from './dto/guild-query.dto.js';
 import {
@@ -68,7 +69,7 @@ export class GuildService {
   private readonly bossKillTtlMs: number;
   private readonly staleSeconds: number;
   private readonly cooldownSeconds: number;
-  /** One Raider.io request per key at a time on this replica. */
+  /** The roster, never cached: one Raider.io request per guild at a time on this replica. */
   private readonly flights = new SingleFlight();
 
   constructor(
@@ -76,6 +77,7 @@ export class GuildService {
     private readonly catalogue: PveCatalogue,
     private readonly cache: CacheService,
     private readonly cooldown: RefreshCooldown,
+    private readonly sharedFlights: SharedFlight,
     config: ConfigService<Env, true>,
   ) {
     this.ttlMs = config.get('GUILD_CACHE_TTL_SECONDS', { infer: true }) * 1000;
@@ -264,7 +266,28 @@ export class GuildService {
 
     let part: T | null;
     try {
-      part = await this.flights.run(key, load);
+      // One Raider.io request per part across every replica. Stored before the
+      // flight ends, so a replica waiting on it finds it.
+      ({ value: part } = await this.sharedFlights.run<T | null>(
+        key,
+        async () => {
+          const loaded = await load();
+          if (loaded) {
+            await this.cache.set(
+              key,
+              loaded,
+              Math.ceil(ttlMsOf(loaded) / 1000) + this.staleSeconds,
+            );
+          }
+          return loaded;
+        },
+        async () => {
+          const stored = await this.cache.get<T>(key);
+          return stored && (!cached || Date.parse(stored.fetchedAt) > Date.parse(cached.fetchedAt))
+            ? stored
+            : null;
+        },
+      ));
     } catch (error) {
       if (cached) {
         this.logger.warn(`Serving ${label} stale: ${describeError(error)}`);
@@ -275,8 +298,6 @@ export class GuildService {
 
     if (!part) throw new NotFoundException('No such guild');
 
-    await this.cache.set(key, part, Math.ceil(ttlMsOf(part) / 1000) + this.staleSeconds);
-
     return { part, stale: false };
   }
 
@@ -284,7 +305,7 @@ export class GuildService {
     const spent = budgetErrorOf(error);
     if (spent) {
       this.logger.warn(`No answer for ${label}: ${spent.message}`);
-      return new BudgetSpentException('Raider.io');
+      return new BudgetSpentException('Raider.io', 'this guild');
     }
 
     this.logger.warn(`Raider.io lookup of ${label} failed: ${describeError(error)}`);
