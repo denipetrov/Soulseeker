@@ -121,7 +121,9 @@ describe('GET /pve/tier-list', () => {
     expect(body.specs[0]).toMatchObject({ class: 'paladin', spec: 'holy' });
     expect(Object.keys(body.specs[0])).toEqual([
       'class',
+      'classId',
       'spec',
+      'specId',
       'tier',
       'score',
       'topDensity',

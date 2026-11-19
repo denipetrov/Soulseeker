@@ -256,7 +256,6 @@ describe('GET /pve/mplus-leaderboard', () => {
     expect(scores((await board('class=mage&spec=arcane')).body)).toEqual([4000, 3500]);
     expect(scores((await board('role=healer')).body)).toEqual([3900, 3700]);
     expect(scores((await board('class=priest&role=healer')).body)).toEqual([3900, 3700]);
-    expect(scores((await board('class=mage&role=healer')).body)).toEqual([]);
     expect((await board('class=deathknight&spec=blood')).body).toMatchObject({
       class: 'deathknight',
       spec: 'blood',
@@ -303,5 +302,65 @@ describe('GET /pve/mplus-leaderboard', () => {
 
   it('needs an access token', async () => {
     expect((await fetch(`${app.url}/pve/mplus-leaderboard`)).status).toBe(401);
+  });
+});
+
+describe('GET /pve/mplus-leaderboard by sub-role', () => {
+  beforeAll(async () => {
+    // Melee damage dealers: none in the fixtures above.
+    await db.collection('mplus_characters').insertMany([
+      {
+        ...character(LIVE, 'eu', 3850, 'arcane'),
+        profile: {
+          classId: 7,
+          className: 'Shaman',
+          specId: 263,
+          specName: 'Enhancement',
+          role: 'dps',
+          raceId: 1,
+          raceName: 'Human',
+          level: 90,
+        },
+      },
+      {
+        ...character(LIVE, 'us', 3550, 'arcane'),
+        profile: {
+          classId: 6,
+          className: 'Death Knight',
+          specId: 251,
+          specName: 'Frost',
+          role: 'dps',
+          raceId: 1,
+          raceName: 'Human',
+          level: 90,
+        },
+      },
+    ]);
+    await resetRedis(app);
+  });
+
+  it('keeps melee or ranged damage dealers, any class or one', async () => {
+    const melee = await board('subRole=melee');
+    expect(melee.status).toBe(200);
+    expect(melee.body).toMatchObject({ role: null, subRole: 'melee', total: 2 });
+    expect(scores(melee.body)).toEqual([3850, 3550]);
+    expect(melee.body.entries.map((e: Json) => e.rank)).toEqual([1, 2]);
+
+    expect(scores((await board('subRole=ranged')).body)).toEqual([4000, 3800, 3500]);
+    expect(scores((await board('role=dps&subRole=ranged&region=kr')).body)).toEqual([3800]);
+    expect(scores((await board('class=deathknight&subRole=melee')).body)).toEqual([3550]);
+    expect(scores((await board('role=dps')).body)).toEqual([4000, 3850, 3800, 3550, 3500]);
+  });
+
+  it('400 for a sub-role of healers, a sub-role with a spec, a class without one', async () => {
+    for (const query of [
+      'role=healer&subRole=melee',
+      'class=mage&spec=fire&subRole=ranged',
+      'class=mage&subRole=melee',
+      'class=mage&role=healer',
+      'subRole=caster',
+    ]) {
+      expect((await board(query)).status, query).toBe(400);
+    }
   });
 });

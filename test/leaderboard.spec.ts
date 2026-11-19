@@ -234,12 +234,16 @@ describe('GET /pvp/leaderboard — current season', () => {
       inTitleRange: true,
       previousRating: 2550,
       class: 'mage',
+      classId: 8,
       spec: 'fire',
+      specId: 63,
       gender: 'female',
       heroTalents: 'Sunfury',
+      heroTalentId: 3,
       level: 90,
       profileStatus: 'ok',
       race: 'Gnome',
+      raceId: 4,
     });
   });
 
@@ -385,5 +389,79 @@ describe('GET /pvp/leaderboard — refusals', () => {
     const response = await fetch(`${app.url}/pvp/leaderboard?region=eu&seasonId=42&bracket=3v3`);
 
     expect(response.status).toBe(401);
+  });
+});
+
+describe('GET /pvp/leaderboard — role and sub-role', () => {
+  const ids = (body: Json) => body.entries.map((e: Json) => e.characterId);
+
+  it('keeps the specs of a role, leaving out characters not enriched yet', async () => {
+    const dps = await board('region=eu&seasonId=42&bracket=3v3&role=dps');
+
+    expect(dps.status).toBe(200);
+    expect(dps.body).toMatchObject({
+      role: 'dps',
+      subRole: null,
+      total: 2,
+      cutoff: { rating: 2500 },
+    });
+    expect(ids(dps.body)).toEqual([1, 2]);
+
+    expect(ids((await board('region=eu&seasonId=42&bracket=3v3&subRole=ranged')).body)).toEqual([
+      1,
+    ]);
+    expect(ids((await board('region=eu&seasonId=42&bracket=3v3&subRole=melee')).body)).toEqual([2]);
+    expect((await board('region=eu&seasonId=42&bracket=3v3&role=healer')).body.total).toBe(0);
+  });
+
+  it('tells a frost mage from a frost death knight', async () => {
+    const row = (characterId: number, rating: number, cls: string) => ({
+      seasonId: 42,
+      region: 'eu',
+      bracket: 'rbg',
+      characterId,
+      rating,
+      class: cls,
+      spec: 'frost',
+    });
+    await db
+      .collection('rbg_ratings')
+      .insertMany([row(21, 2400, 'deathknight'), row(22, 2300, 'mage')]);
+
+    expect(ids((await board('region=eu&seasonId=42&bracket=rbg&subRole=ranged')).body)).toEqual([
+      22,
+    ]);
+    expect(ids((await board('region=eu&seasonId=42&bracket=rbg&subRole=melee')).body)).toEqual([
+      21,
+    ]);
+    expect(ids((await board('region=eu&seasonId=42&bracket=rbg&role=dps')).body)).toEqual([21, 22]);
+  });
+
+  it('narrows a class to its specs of the role', async () => {
+    const { body } = await board('region=eu&seasonId=42&bracket=shuffle&class=warrior&role=dps');
+
+    expect(ids(body)).toEqual([2]);
+    expect(body.cutoff).toBeNull();
+  });
+
+  it('reads an archived spec family as the ladders of the role', async () => {
+    const all = await board('region=eu&seasonId=41&bracket=shuffle&role=dps');
+    expect(all.status).toBe(200);
+    expect(ids(all.body)).toEqual([14, 13]);
+
+    const melee = await board('region=eu&seasonId=41&bracket=shuffle&subRole=melee');
+    expect(ids(melee.body)).toEqual([14]);
+  });
+
+  it('400 for a role on an archived 3v3, a sub-role of tanks, a class without the role', async () => {
+    for (const query of [
+      'region=eu&seasonId=41&bracket=3v3&role=dps',
+      'region=eu&seasonId=42&bracket=3v3&role=tank&subRole=melee',
+      'region=eu&seasonId=42&bracket=3v3&class=priest&role=tank',
+      'region=eu&seasonId=42&bracket=shuffle-mage-fire&role=dps',
+      'region=eu&seasonId=42&bracket=3v3&subRole=hybrid',
+    ]) {
+      expect((await board(query)).status, query).toBe(400);
+    }
   });
 });

@@ -27,12 +27,12 @@ export type BoardRow = Pick<
 const PROFILE_PROJECTION = {
   'profile.class.name': 1,
   'profile.spec.name': 1,
-  'profile.heroTalentTree.name': 1,
+  'profile.heroTalentTree': 1,
   'profile.talentLoadouts.spec.name': 1,
-  'profile.talentLoadouts.heroTalentTree.name': 1,
+  'profile.talentLoadouts.heroTalentTree': 1,
   'profile.gender': 1,
   'profile.level': 1,
-  'profile.race.name': 1,
+  'profile.race': 1,
 } as const;
 
 /**

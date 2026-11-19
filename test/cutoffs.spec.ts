@@ -146,12 +146,18 @@ describe('GET /pvp/cutoffs', () => {
       total: 4,
     });
     expect(body.specs).toEqual([
-      { class: 'mage', spec: 'fire', count: 2 },
+      { class: 'mage', classId: 8, spec: 'fire', specId: 63, count: 2 },
       expect.objectContaining({ count: 1 }),
       expect.objectContaining({ count: 1 }),
     ]);
     // Characters not enriched yet are counted, under a null class and spec.
-    expect(body.specs).toContainEqual({ class: null, spec: null, count: 1 });
+    expect(body.specs).toContainEqual({
+      class: null,
+      classId: null,
+      spec: null,
+      specId: null,
+      count: 1,
+    });
   });
 
   it('gives RBG its faction titles, one rating for both', async () => {
@@ -178,7 +184,9 @@ describe('GET /pvp/cutoffs', () => {
     expect(body.specs).toEqual([
       {
         class: 'mage',
+        classId: 8,
         spec: 'fire',
+        specId: 63,
         count: 2,
         cutoff: expect.objectContaining({
           bracket: 'shuffle-mage-fire',
@@ -260,12 +268,16 @@ describe('GET /pvp/cutoffs with class and spec', () => {
       inTitleRange: true,
       previousRating: 2430,
       class: 'mage',
+      classId: 8,
       spec: 'fire',
+      specId: 63,
       gender: 'female',
       heroTalents: 'Sunfury',
+      heroTalentId: 44,
       level: 90,
       profileStatus: 'ok',
       race: 'Blood Elf',
+      raceId: 10,
     });
   });
 
@@ -295,5 +307,61 @@ describe('GET /pvp/cutoffs with class and spec', () => {
   it('400 for a class without a spec, or a spec without a class', async () => {
     expect((await cutoffs('region=eu&bracket=shuffle&class=mage')).status).toBe(400);
     expect((await cutoffs('region=eu&bracket=shuffle&spec=fire')).status).toBe(400);
+  });
+});
+
+describe('GET /pvp/cutoffs with a role or sub-role', () => {
+  it('counts 3v3 only for the specs of the role, without characters not enriched yet', async () => {
+    const { status, body } = await cutoffs('region=eu&bracket=3v3&role=dps');
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ class: null, role: 'dps', subRole: null, total: 3 });
+    expect(body.specs).toEqual([
+      { class: 'mage', classId: 8, spec: 'fire', specId: 63, count: 2 },
+      { class: 'warrior', classId: 1, spec: 'arms', specId: 71, count: 1 },
+    ]);
+
+    const melee = await cutoffs('region=eu&bracket=3v3&subRole=melee');
+    expect(melee.body).toMatchObject({ subRole: 'melee', total: 1 });
+    expect(melee.body.specs).toEqual([
+      { class: 'warrior', classId: 1, spec: 'arms', specId: 71, count: 1 },
+    ]);
+  });
+
+  it("counts Shuffle's own spec ladders of the role, a role nobody reaches at 0", async () => {
+    const healers = await cutoffs('region=eu&bracket=shuffle&role=healer');
+    expect(healers.status).toBe(200);
+    expect(healers.body.total).toBe(0);
+    expect(healers.body.specs).toEqual([
+      expect.objectContaining({ class: 'priest', spec: 'holy', count: 0 }),
+    ]);
+
+    const ranged = await cutoffs('region=eu&bracket=shuffle&subRole=ranged');
+    expect(ranged.body.specs).toEqual([
+      expect.objectContaining({ class: 'mage', spec: 'fire', count: 2 }),
+    ]);
+
+    // A role whose specs have no cutoff recorded: none listed, still a 200.
+    const tanks = await cutoffs('region=eu&bracket=shuffle&role=tank');
+    expect(tanks.status).toBe(200);
+    expect(tanks.body).toMatchObject({ total: 0, specs: [] });
+  });
+
+  it('narrows a class to its specs of the role', async () => {
+    const { status, body } = await cutoffs('region=eu&bracket=shuffle&class=mage&role=dps');
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ class: 'mage', role: 'dps', total: 2 });
+    expect(body.specs.map((s: Json) => s.spec)).toEqual(['fire']);
+  });
+
+  it('400 for a role with a spec, a sub-role of healers, a class without the role', async () => {
+    for (const query of [
+      'region=eu&bracket=shuffle&class=mage&spec=fire&role=dps',
+      'region=eu&bracket=shuffle&role=healer&subRole=ranged',
+      'region=eu&bracket=shuffle&class=warlock&role=healer',
+    ]) {
+      expect((await cutoffs(query)).status, query).toBe(400);
+    }
   });
 });

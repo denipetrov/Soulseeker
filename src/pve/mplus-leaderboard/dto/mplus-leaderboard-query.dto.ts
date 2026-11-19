@@ -7,13 +7,15 @@ import {
   MAX_OFFSET,
   MAX_PAGE_SIZE,
 } from '../../../pvp/leaderboard/dto/leaderboard-query.dto.js';
+import { checkRoleFilters, ROLES, subRoleSchema } from '../../../pvp/roles.js';
 import { SPECS_BY_CLASS } from '../../../pvp/specs.js';
 import { slugSchema, WORLD } from '../../bosses/dto/bosses-query.dto.js';
 import { CURRENT_SEASON } from '../../shared/mplus-season.resolver.js';
 
 /** Every region together. */
 export const MPLUS_BOARDS = [WORLD, ...RAIDERIO_REGIONS] as const;
-export const MPLUS_ROLES = ['tank', 'healer', 'dps'] as const;
+/** spirit-link's `SpecRole`: `tank`, `healer`, `dps`. */
+export const MPLUS_ROLES = ROLES;
 
 const slugOf = z
   .string()
@@ -66,6 +68,7 @@ export const mplusLeaderboardQuerySchema = z
         description: 'With or without class; not with spec.',
         enum: [...MPLUS_ROLES],
       }),
+    subRole: subRoleSchema,
     page: z.coerce.number().int().positive().default(1).meta({ description: '1-based page.' }),
     pageSize: z.coerce
       .number()
@@ -79,9 +82,7 @@ export const mplusLeaderboardQuerySchema = z
     if (query.spec && !query.class) {
       ctx.addIssue({ code: 'custom', path: ['spec'], message: 'needs class' });
     }
-    if (query.spec && query.role) {
-      ctx.addIssue({ code: 'custom', path: ['role'], message: 'cannot be combined with spec' });
-    }
+    checkRoleFilters(query, ctx);
     if (query.spec && query.class && !SPECS_BY_CLASS[query.class].includes(query.spec)) {
       ctx.addIssue({ code: 'custom', path: ['spec'], message: `is not a ${query.class} spec` });
     }
@@ -94,6 +95,7 @@ export const mplusLeaderboardQuerySchema = z
     class: query.class ?? null,
     spec: query.spec ?? null,
     role: query.role ?? null,
+    subRole: query.subRole ?? null,
   }));
 
 export type MplusLeaderboardQuery = z.infer<typeof mplusLeaderboardQuerySchema>;

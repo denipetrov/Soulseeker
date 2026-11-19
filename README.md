@@ -124,8 +124,8 @@ All need a token except health and `/oidc`. Full parameters and responses are in
 
 | Route | Purpose |
 | --- | --- |
-| `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | A ladder page, live or archived; optional `class`/`spec` |
-| `GET /pvp/cutoffs?region=eu&bracket=shuffle` | Title cutoffs and how many of each spec reach them; with `class`+`spec`, the characters |
+| `GET /pvp/leaderboard?region=eu&seasonId=42&bracket=3v3&page=1` | A ladder page, live or archived; optional `class`/`spec`, or `role`/`subRole` |
+| `GET /pvp/cutoffs?region=eu&bracket=shuffle` | Title cutoffs and how many of each spec reach them, optionally for one `role`/`subRole`; with `class`+`spec`, the characters |
 | `GET /pvp/tier-list?region=eu&bracket=shuffle` | Every spec scored 0–100 and ranked S to D |
 | `GET /pvp/hero-talents?region=world&bracket=3v3&top=50` | Hero talent trees of each spec's top players |
 | `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=latest` | Spec shares at a rating on one day; `getEarliestDate=true` for the calendar |
@@ -133,6 +133,15 @@ All need a token except health and `/oidc`. Full parameters and responses are in
 | `GET /pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | One character from Blizzard; syncs ratings to Rankwarden |
 
 Every PvP board also takes `region=world`: all regions together.
+
+**Role filters.** `/pvp/leaderboard`, `/pvp/cutoffs` and `/pve/mplus-leaderboard` take
+`role` (`tank`, `healer`, `dps`) and `subRole` (`melee`, `ranged`, damage dealers only).
+They work with or without `class`, never with `spec`. Each spec's role comes from
+`@denipetrov/spirit-link` (`SPECIALIZATIONS`, 0.6.0).
+Example: `/pvp/leaderboard?region=us&seasonId=42&bracket=shuffle&subRole=melee`.
+
+**Ids.** Wherever an answer names a class, spec, race or hero talent tree, it also carries
+Blizzard's id (`classId`, `specId`, `raceId`, `heroTalentId`), the same on PvP and PvE.
 
 **PvE**
 
@@ -144,7 +153,7 @@ Every PvP board also takes `region=world`: all regions together.
 | `GET /pve/raid?raidSlug=current&region=world&difficulty=mythic` | One raid's top 100 guilds |
 | `GET /pve/bosses?region=world&raidSlug=current&top=10` | The first guilds to kill each boss |
 | `GET /pve/mplus-seasons` | Every Mythic+ season with dungeons and cutoffs, and every affix |
-| `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane` | Mythic+ characters by score, paged |
+| `GET /pve/mplus-leaderboard?region=world&season=current&class=mage&spec=arcane` | Mythic+ characters by score, paged; optional `class`/`spec`, or `role`/`subRole` |
 | `GET /pve/mplus-runs?region=world&season=current&dungeon=murder-row` | Mythic+ runs by score, paged |
 | `GET /pve/mplus-run?keystoneRunId=19324786` | One run's details and roster, from Raider.io |
 | `GET /pve/mplus-compositions?region=world&top=1000` | The 50 most played party compositions |

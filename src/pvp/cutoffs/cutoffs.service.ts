@@ -10,6 +10,8 @@ import {
 } from '../leaderboard/board-enricher.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import type { Cutoff, PvpSeason, SpecFamily } from '../seasons/pvp-season.types.js';
+import { specsMatching } from '../roles.js';
+import { classIdOf, specIdOf } from '../specs.js';
 import { regionsOf, WORLD, type PvpBoard } from '../world.js';
 import type { CutoffBracket, CutoffsQuery } from './dto/cutoffs-query.dto.js';
 import type {
@@ -84,13 +86,19 @@ export class CutoffsService {
 
     if (query.class && query.spec) return this.characters(query, seasons, query.class, query.spec);
 
+    // With a role, only its specs: `class-spec` keys, never a spec name alone.
+    const wanted =
+      query.role || query.subRole
+        ? new Set(specsMatching(query).map((pair) => `${pair.class}-${pair.spec}`))
+        : null;
+
     const counted = (
       await Promise.all(
         seasons.map(async (season) => ({
           season,
           specs: isSpecFamily(query.bracket)
-            ? await this.perSpecLadder(season, query.bracket)
-            : await this.perSpec(season, query.bracket),
+            ? await this.perSpecLadder(season, query.bracket, wanted)
+            : await this.perSpec(season, query.bracket, wanted),
         })),
       )
     ).filter((entry): entry is RegionCounts => entry.specs !== null);
@@ -102,13 +110,20 @@ export class CutoffsService {
     }
 
     const world = query.region === WORLD;
-    const specs = world ? mergedCounts(counted) : counted[0]!.specs;
+    const specs = (world ? mergedCounts(counted) : counted[0]!.specs).map((entry) => ({
+      ...entry,
+      classId: classIdOf(entry.class),
+      specId: specIdOf(entry.class, entry.spec),
+    }));
     specs.sort((a, b) => b.count - a.count);
 
     const used = counted.map((entry) => entry.season);
     const response: CutoffsResponse = {
       region: query.region,
       bracket: query.bracket,
+      class: query.class,
+      role: query.role,
+      subRole: query.subRole,
       ...seasonFieldsOf(used),
       cutoff: world || isSpecFamily(query.bracket) ? null : used[0]!.cutoffs[query.bracket],
       total: specs.reduce((sum, entry) => sum + entry.count, 0),
@@ -239,6 +254,7 @@ export class CutoffsService {
   private async perSpec(
     season: PvpSeason,
     bracket: Exclude<CutoffBracket, SpecFamily>,
+    wanted: ReadonlySet<string> | null,
   ): Promise<SpecCutoffCount[] | null> {
     const cutoff = season.cutoffs[bracket];
     const rating = cutoff ? ratingOf(cutoff) : null;
@@ -257,7 +273,11 @@ export class CutoffsService {
       ])
       .toArray();
 
-    return groups.map(({ _id, count }) => ({ class: _id.class, spec: _id.spec, count }));
+    // With a role, characters not enriched yet (no class or spec) are left out:
+    // their role is unknown.
+    return groups
+      .filter(({ _id }) => !wanted || wanted.has(`${_id.class}-${_id.spec}`))
+      .map(({ _id, count }) => ({ class: _id.class, spec: _id.spec, count }));
   }
 
   /**
@@ -267,9 +287,12 @@ export class CutoffsService {
   private async perSpecLadder(
     season: PvpSeason,
     family: SpecFamily,
+    wanted: ReadonlySet<string> | null,
   ): Promise<SpecCutoffCount[] | null> {
-    const ladders = Object.entries(season.specCutoffs[family]);
-    if (ladders.length === 0) return null;
+    const all = Object.entries(season.specCutoffs[family]);
+    // No cutoffs at all is "not recorded yet"; a role among recorded ones counts its specs only.
+    if (all.length === 0) return null;
+    const ladders = wanted ? all.filter(([key]) => wanted.has(key)) : all;
 
     const ratings = this.mongo.collection<RatingRow>(RATING_COLLECTIONS[family]);
 

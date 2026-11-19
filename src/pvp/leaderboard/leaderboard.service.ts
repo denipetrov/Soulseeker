@@ -10,6 +10,7 @@ import { MongoService } from '../../database/mongo.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import { regionsOf, WORLD, type PvpBoard } from '../world.js';
+import { specsMatching } from '../roles.js';
 import {
   CORE_BRACKETS,
   type CoreBracket,
@@ -106,6 +107,8 @@ export class LeaderboardService {
       query.bracket,
       query.class ?? '-',
       query.spec ?? '-',
+      query.role ?? '-',
+      query.subRole ?? '-',
       query.page,
       query.pageSize,
     ].join(':');
@@ -134,16 +137,22 @@ export class LeaderboardService {
     return live.length > 0 ? live : found;
   }
 
-  private assertArchivedFilters({ bracket, class: cls, spec }: LeaderboardQuery): void {
-    if (isCore(bracket) && (cls || spec)) {
+  private assertArchivedFilters({
+    bracket,
+    class: cls,
+    spec,
+    role,
+    subRole,
+  }: LeaderboardQuery): void {
+    if (isCore(bracket) && (cls || spec || role || subRole)) {
       throw new BadRequestException({
-        message: 'Archived seasons are not filtered by class or spec',
+        message: 'Archived seasons are not filtered by class, spec or role',
       });
     }
 
-    if (!isCore(bracket) && !(cls && spec)) {
+    if (!isCore(bracket) && !(cls && spec) && !role && !subRole) {
       throw new BadRequestException({
-        message: `Archived ${bracket} ladders are per spec: give class and spec`,
+        message: `Archived ${bracket} ladders are per spec: give class and spec, or a role`,
       });
     }
   }
@@ -155,8 +164,17 @@ export class LeaderboardService {
     // On `world`, `$in` the regions: each index leads with season then region,
     // so the regions' ranges merge in rating order rather than being sorted.
     const filter: Filter<RatingRow> = { seasonId: query.seasonId, region: inRegions(seasons) };
-    if (query.class) filter.class = query.class;
-    if (query.spec) filter.spec = query.spec;
+    if (query.role || query.subRole) {
+      // Exact class and spec pairs, never a spec name alone: Frost is melee for
+      // a death knight and ranged for a mage. Each branch walks `spec_board` in
+      // rating order and MongoDB merges them, reading index keys only (~30 ms
+      // 5,000 deep on world Shuffle); `class $in` × `spec $in` was planned on
+      // `class_board` instead and fetched thousands of documents.
+      filter.$or = specsMatching(query).map((pair) => ({ class: pair.class, spec: pair.spec }));
+    } else {
+      if (query.class) filter.class = query.class;
+      if (query.spec) filter.spec = query.spec;
+    }
 
     const ratings = this.mongo.collection<RatingRow>(RATING_COLLECTIONS[query.bracket]);
     const [rows, total] = await Promise.all([
@@ -177,8 +195,13 @@ export class LeaderboardService {
     seasons: PvpSeason[],
   ): Promise<LeaderboardResponse> {
     const { seasonId, bracket, class: cls, spec } = query;
-    // `assertArchivedFilters` has made sure a spec family names both.
-    const ladder = isCore(bracket) ? bracket : `${bracket}-${cls}-${spec}`;
+    // `assertArchivedFilters` has made sure a spec family names a spec or a
+    // role. A role is the spec ladders it covers, merged by `archive_board`.
+    const ladder = isCore(bracket)
+      ? bracket
+      : query.role || query.subRole
+        ? { $in: specsMatching(query).map((pair) => `${bracket}-${pair.class}-${pair.spec}`) }
+        : `${bracket}-${cls}-${spec}`;
     const filter: Filter<ArchiveEntry> = { seasonId, region: inRegions(seasons), bracket: ladder };
 
     // `archive_board` (seasonId, region, bracket, rating desc) serves both.
@@ -214,6 +237,8 @@ export class LeaderboardService {
       bracket: query.bracket,
       class: query.class,
       spec: query.spec,
+      role: query.role,
+      subRole: query.subRole,
       current: seasons[0]!.current,
       page: query.page,
       pageSize: query.pageSize,

@@ -66,7 +66,13 @@ function answerFor(field: string): Record<string, unknown> {
         },
       };
     case 'talents':
-      return { talentLoadout: { loadout_spec_id: 65, loadout_text: 'CODE' } };
+      return {
+        talentLoadout: {
+          loadout_spec_id: 65,
+          loadout_text: 'CODE',
+          active_hero_tree: { id: 49, traitTreeId: 790, name: 'Lightsmith', slug: 'lightsmith' },
+        },
+      };
     case 'guild':
       return { guild: { name: 'veow', realm: 'Demon Soul' } };
     case 'raid_progression':
@@ -286,6 +292,25 @@ describe('GET /pve/character', () => {
     expect(second.body).toEqual(first.body);
     expect(raiderIo()).toHaveLength(1);
     expect(blizzard()).toHaveLength(1);
+  });
+
+  it("gives Blizzard's class, spec, race and hero talent ids beside Raider.io's names", async () => {
+    const page = await lookup();
+
+    expect(page.body.character).toMatchObject({
+      class: 'Paladin',
+      classId: 2,
+      activeSpecName: 'Holy',
+      activeSpecId: 65,
+      race: 'Human',
+      raceId: 1,
+    });
+    expect(page.body).toMatchObject({ heroTalents: 'Lightsmith', heroTalentId: 49 });
+
+    // A widget has no talents, so no hero tree, but the same base ids.
+    const season = await lookup('&mplusSeasonScore=season-mn-2');
+    expect(season.body.character).toMatchObject({ classId: 2, activeSpecId: 65, raceId: 1 });
+    expect(season.body).not.toHaveProperty('heroTalentId');
   });
 
   it('still answers when Blizzard fails, with no bosses', async () => {

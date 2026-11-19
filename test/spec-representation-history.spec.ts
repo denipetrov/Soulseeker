@@ -114,7 +114,10 @@ describe('GET /pvp/spec-representation/history', () => {
       total: 120,
       classified: 100,
       // Exactly as stored, hero talents included.
-      specs: [spec('priest', 'discipline', 70), spec('mage', 'fire', 30)],
+      specs: [
+        { ...spec('priest', 'discipline', 70), classId: 5, specId: 256 },
+        { ...spec('mage', 'fire', 30), classId: 8, specId: 63 },
+      ],
     });
     expect(last.specs[0]).toMatchObject({
       heroTalentsClassified: 70,

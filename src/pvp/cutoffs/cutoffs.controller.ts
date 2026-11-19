@@ -62,6 +62,9 @@ const CHARACTERS_EXAMPLE: CutoffCharactersResponse = {
 const EXAMPLE: CutoffsResponse = {
   region: 'eu',
   bracket: 'shuffle',
+  class: null,
+  role: null,
+  subRole: null,
   seasonId: 42,
   seasonName: 'Player vs. Player (Midnight Season 2)',
   final: false,

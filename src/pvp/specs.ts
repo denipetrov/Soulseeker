@@ -1,4 +1,19 @@
-import { CLASSES } from './leaderboard/dto/leaderboard-query.dto.js';
+/** Class slugs as Rankwarden stores them on the ratings rows and in ladder names. */
+export const CLASSES = [
+  'deathknight',
+  'demonhunter',
+  'druid',
+  'evoker',
+  'hunter',
+  'mage',
+  'monk',
+  'paladin',
+  'priest',
+  'rogue',
+  'shaman',
+  'warlock',
+  'warrior',
+] as const;
 
 /**
  * Every spec of every class, as the ratings rows and ladder names spell them.
@@ -104,3 +119,16 @@ export const classSlugOf = (classId: number): string | null => CLASS_SLUGS.get(c
 /** The spec slug of a Blizzard specialization id: `253` → `beastmastery`; null if unknown. */
 export const specSlugOf = (specId: number | null): string | null =>
   specId === null ? null : (SPEC_SLUGS.get(specId) ?? null);
+
+/** Blizzard's spec id for a class and spec slug pair, or null for an unknown or missing pair. */
+export function specIdOf(
+  cls: string | null | undefined,
+  spec: string | null | undefined,
+): number | null {
+  return cls && spec ? (SPEC_IDS[`${cls}-${spec}`] ?? null) : null;
+}
+
+/** Blizzard's class id for a class slug, or null for an unknown or missing one. */
+export function classIdOf(cls: string | null | undefined): number | null {
+  return cls ? ((CLASS_IDS as Record<string, number>)[cls] ?? null) : null;
+}

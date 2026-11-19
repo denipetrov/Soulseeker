@@ -1,4 +1,7 @@
+import { SPECIALIZATIONS } from '@denipetrov/spirit-link/constants';
+
 import type { CharacterRaidEncountersPayload } from '../../blizzard/schemas/character-raid-encounters.schema.js';
+import { raceIdOf } from '../../characters/races.js';
 import type { RaiderIoRegion } from '../../raiderio/raiderio.constants.js';
 import type {
   RaiderIoBestRun,
@@ -292,7 +295,7 @@ export function responseOf(
   const response: PveCharacterResponse = {
     region,
     realmSlug,
-    character: newest.character,
+    character: withIds(newest.character),
     fetchedAt: oldest.fetchedAt,
     stale,
   };
@@ -302,6 +305,9 @@ export function responseOf(
     response.guild = full.guild;
     response.gear = full.gear;
     response.talentLoadout = full.talentLoadout;
+    const heroTree = heroTreeOf(full.talentLoadout);
+    response.heroTalents = heroTree?.name ?? null;
+    response.heroTalentId = heroTree?.id ?? null;
     response.raidProgression = full.raidProgression;
     // Cached before the curve was asked for on the whole page: empty until refetched.
     response.raidAchievementCurve = full.raidAchievementCurve ?? [];
@@ -420,4 +426,35 @@ export function syncPayloadOf(
       role: roleOf(payload.active_spec_role),
     },
   };
+}
+
+/**
+ * The base profile with Blizzard's ids beside Raider.io's names: class and
+ * active spec from spirit-link's `SPECIALIZATIONS` (class and spec name
+ * together, as spec names repeat across classes), race from its name and the
+ * faction. Worked out per answer, so cached pages carry them too.
+ */
+function withIds(character: PveCharacterBase): PveCharacterBase {
+  const classId = SPECIALIZATIONS.find((spec) => spec.className === character.class)?.classId;
+  const specId = SPECIALIZATIONS.find(
+    (spec) => spec.className === character.class && spec.name === character.activeSpecName,
+  )?.id;
+
+  return {
+    ...character,
+    raceId: raceIdOf(character.race, character.faction),
+    classId: classId ?? null,
+    activeSpecId: specId ?? null,
+  };
+}
+
+/** `talentLoadout.active_hero_tree`, as Raider.io sends it with `talents:categorized`. */
+function heroTreeOf(
+  loadout: Record<string, unknown> | null | undefined,
+): { id: number; name: string } | null {
+  const tree = loadout?.active_hero_tree as { id?: unknown; name?: unknown } | null | undefined;
+
+  return tree && typeof tree.id === 'number' && typeof tree.name === 'string'
+    ? { id: tree.id, name: tree.name }
+    : null;
 }

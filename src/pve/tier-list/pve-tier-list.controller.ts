@@ -29,7 +29,9 @@ const EXAMPLE: PveTierListResponse = {
   specs: [
     {
       class: 'paladin',
+      classId: 2,
       spec: 'holy',
+      specId: 65,
       tier: 'S',
       score: 96.1,
       topDensity: { top250: 61, top500: 118, top1000: 230, top2500: 571, top5000: 1104, score: 45 },

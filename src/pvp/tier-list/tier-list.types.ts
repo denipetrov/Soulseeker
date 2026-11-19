@@ -6,7 +6,11 @@ export type Tier = 'S' | 'A' | 'B' | 'C' | 'D';
 export interface TierListSpec {
   /** Slugs, as on the ladders: `warrior`, `arms`. */
   class: string;
+  /** Blizzard's class id; null only for a spec the data has but `specs.ts` does not. */
+  classId: number | null;
   spec: string;
+  /** Blizzard's spec id; null only for a spec the data has but `specs.ts` does not. */
+  specId: number | null;
   tier: Tier;
   /** 0–100: the three factors' points added up. Specs are ordered by it. */
   score: number;

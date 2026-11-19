@@ -77,9 +77,10 @@ Same as Rankwarden, on purpose: Node 24 (engines ≥ 22), TypeScript 6 strict ES
 `zod` 4, Vitest 4 with SWC, ESLint 10 flat config, Prettier. Added: `redis` (node-redis
 6), `oidc-provider` 9 (certified OpenID Connect server, Koa inside), `jose` 6, `helmet`.
 
-`@denipetrov/spirit-link` 0.5: `logLevelsFor`, `withRunId`, `RunLogger`,
+`@denipetrov/spirit-link` 0.6: `logLevelsFor`, `withRunId`, `RunLogger`,
 `DependencyHealth`, `probeObservation`, `worstOf`, `hostOf`; `searchNameOf`
-(`/search`); `REPRESENTATION_MIN_RATINGS` (`/constants`); `RaidDifficulty`.
+(`/search`); `REPRESENTATION_MIN_RATINGS`, `RaidDifficulty`, and (0.6) `SPECIALIZATIONS`,
+`SpecRole` and `SpecSubRole` (`/constants`), which the role filters (§7) are built on.
 `@denipetrov/blizz-auth` 0.1: the Blizzard OAuth token for the upstream.
 
 ## 2. Module map
@@ -357,14 +358,85 @@ the regions a board covers. The character page is one character, so it has none.
   world Shuffle.
 - Tests: `test/pvp-world.spec.ts`, with EU and US fixtures sharing a character id.
 
+### Role and sub-role filters
+
+`/pvp/leaderboard`, `/pvp/cutoffs` and `/pve/mplus-leaderboard` take `role` (`tank`,
+`healer`, `dps`) and `subRole` (`melee`, `ranged`). Everything shared is in
+`src/pvp/roles.ts`; its unit tests are `src/pvp/roles.spec.ts`.
+
+- **Source.** spirit-link's `SPECIALIZATIONS` gives each spec, by Blizzard spec id, its
+  `role` and `subRole` (null for tanks and healers). `SPEC_ROLES` maps that onto this
+  service's `class-spec` slugs through `SPEC_IDS`. A unit test checks that all 40 pairs
+  in `ALL_SPECS` have a role, and that every spirit-link spec has a slug. A spec added to
+  the game needs both lists updated.
+- **Counts:** 6 tanks, 7 healers, 13 melee, 14 ranged (27 dps).
+- **`specsMatching({ class, role, subRole })`** gives the class and spec pairs a filter
+  names. Always use it: pairs, never spec names. Frost is melee for a death knight and
+  ranged for a mage; Holy, Restoration and Protection each belong to two classes.
+- **Schemas.** `roleSchema` and `subRoleSchema` are the query fields.
+  `checkRoleFilters(query, ctx)` adds the shared 400s:
+  - a `subRole` with `role` other than `dps` ("is only for role dps");
+  - a role with `spec` ("cannot be combined with spec");
+  - a `class` with no spec of the role ("has no tank spec").
+  - `subRole` alone means dps.
+- **Answers** echo `role` and `subRole`, null when not given.
+- **Import order.** `CLASSES` lives in `src/pvp/specs.ts`, re-exported from the
+  leaderboard schema, so the schemas can import `roles.ts` without a cycle (`specs.ts` used
+  to import `CLASSES` from that schema).
+- **Query shapes, measured on the local data (2026-11-19).**
+  - PvP rows: `$or` of `{ class, spec }` pairs. Each branch walks `spec_board`, and MongoDB
+    merges them in rating order (SORT_MERGE), reading index keys only. US Shuffle melee:
+    ~28 ms 5,000 deep, count ~10 ms.
+  - `class $in` × `spec $in` was rejected: the planner sometimes took `class_board` and
+    fetched ~9,300 documents for a 5,000-deep page, and the count took ~120 ms.
+  - M+: `profile.specId $in` on the spec board (`mplus_spec_board` /
+    `_region_board`), also a SORT_MERGE. World melee: ~20 ms 20,000 deep, count ~7 ms.
+
+### Blizzard ids beside names
+
+Wherever an answer names a class, spec, race or hero talent tree, it carries Blizzard's id
+beside it, so the front end keys everything on one id (added 2026-11-19).
+
+- **Helpers.** `classIdOf(slug)` and `specIdOf(classSlug, specSlug)` (`src/pvp/specs.ts`),
+  from `CLASS_IDS` / `SPEC_IDS`. Use them wherever a response is built from slugs.
+- **PvP entries** (leaderboard, cutoff characters, `currentEntry` in
+  `leaderboard.mapper.ts`): `classId` and `specId` from the slugs. `raceId` comes from
+  `profile.race.id`, and `heroTalentId` from the same tree as `heroTalents`
+  (`heroTalentTreeFor`: the ladder's spec loadout on Shuffle and Blitz, else the active
+  tree). `BoardEnricher` projects whole `{ id, name }` objects for these. Archived rows have
+  none of them.
+- **Per-spec lists.** Cutoff counts, both tier lists (`TierListSpec`), hero talents (per
+  class and per spec) and PvP spec representation all get `classId`/`specId`.
+  - The representation ids are added on the way out (`withIds` in
+    `representation.service.ts`); Rankwarden does not store them.
+  - Unenriched cutoff entries answer null.
+- **Search.** The PvP suggestion reads `profile.{class,spec,heroTalentTree,race}.id`; the
+  M+ one reads `profile.classId/specId/raceId`. `heroTalentId` is always null for M+.
+- **`/pve/character`.** Raider.io gives names only. These are worked out per answer in
+  `responseOf`, so cached pages carry them too:
+  - `classId` and `activeSpecId` come from spirit-link's `SPECIALIZATIONS`, by class and
+    spec name together.
+  - `raceId` comes from `raceIdOf(name, faction)` in `src/characters/races.ts`. Pandaren
+    (25/26), Dracthyr (52/70), Earthen (85/84) and Haranir (86/91) are split by faction
+    (alliance/horde), as Rankwarden's data showed. A new race answers null until it is
+    added there.
+  - `heroTalents` and `heroTalentId` (whole page only) come from
+    `talentLoadout.active_hero_tree`. Raider.io's hero tree ids are Blizzard's: Farseer is
+    56 in both, checked against Rankwarden's stored trees.
+- **Already there:** `/pvp/character` (Blizzard's `{ id, name }` objects), and the M+
+  leaderboard profile, runs, compositions and `/pve/spec-representation`, which keep
+  Rankwarden's stored ids.
+
 ### PvP leaderboard
 
-`GET /pvp/leaderboard?region=&seasonId=&bracket=[&class=&spec=][&page=&pageSize=]`
+`GET /pvp/leaderboard?region=&seasonId=&bracket=[&class=&spec=][&role=&subRole=][&page=&pageSize=]`
 (`src/pvp/leaderboard/`). The parameters:
 
 - `bracket` is a family (`2v2`, `3v3`, `rbg`, `shuffle`, `blitz`) or one spec ladder by
   name (`shuffle-mage-fire`, the same as `bracket=shuffle&class=mage&spec=fire`).
 - `class` and `spec` are slugs; `spec` needs `class`.
+- `role` and `subRole` (above): with or without `class`, never with `spec` or a spec ladder
+  name.
 - `page` is 1-based; `pageSize` defaults to 50, at most 100, and no page may start past
   row 200,000.
 
@@ -409,7 +481,18 @@ The response and its fields:
 - **Cache.** Whole pages are cached in Redis for `LEADERBOARD_CACHE_TTL_SECONDS` (60).
 - **Enrichment gaps.** On 2v2, 3v3 and RBG, rows only have a class once Rankwarden has
   enriched the character. A class filter there leaves the others out, and today every
-  EU 3v3 row is unenriched, so `class=` returns nothing for EU.
+  EU 3v3 row is unenriched, so `class=` returns nothing for EU. The same holds for a role.
+- **Role.**
+  - Live boards filter on the role's exact pairs (`$or`, see above).
+  - Archived Shuffle and Blitz are stored per spec ladder, so a role there reads
+    `bracket: { $in: [<family>-<class>-<spec>, …] }` through `archive_board`, merged by
+    rating. An archived spec family now needs class and spec, or a role.
+  - Archived 2v2, 3v3 and RBG have no class at all: a role there is 400.
+  - `cutoff` is null on a role board (several specs, each with its own); every entry's
+    `inTitleRange` still uses its own ladder.
+  - Real data (US Shuffle, season 42): 121,300 rows, 30,729 healers, 45,181 melee,
+    44,030 ranged.
+  - The cache key carries `role` and `subRole`.
 
 ### PvP title cutoffs
 
@@ -436,6 +519,17 @@ them.
   never a live season since), the count uses the lower one: rating rows carry no faction.
 - **404** when the region has no current season, or no cutoffs recorded for the bracket
   yet (early in a season, before Rankwarden has read them).
+- **With `role` or `subRole`**, the counts only:
+  - Only the specs of that role are listed, and `total` is theirs.
+  - `class` may come with a role (not alone), to narrow to that class's specs of it.
+  - On 3v3 and RBG the not-enriched entry (null class and spec) is left out: its role is
+    unknown.
+  - On Shuffle and Blitz only the role's spec ladders are counted. A role whose specs have
+    no cutoff recorded is a 200 with `specs: []`; the 404 stays for a season with no
+    cutoffs at all.
+  - The counts answer echoes `class`, `role` and `subRole`.
+  - A role does not switch to a characters list: that still needs one class and spec.
+    Offered as a later addition if the front end wants "every healer with the title".
 - **With `class` and `spec`** (always together; a spec slug alone is ambiguous, as in
   `holy`, `frost`, `restoration`, `protection`): no counts. It returns `characters`, the
   spec's characters at or above the cutoff, best first.
@@ -1115,7 +1209,7 @@ collections whole.
   - `region`: `world` (default), `us`, `eu`, `kr`, `tw` or `cn`. Raider.io covers China,
     unlike the PvP ladders.
   - `season`: a slug or `current` (default).
-  - `class`, `spec`, `role`.
+  - `class`, `spec`, `role`, `subRole`.
   - `page` and `pageSize`: the same paging as `/pvp/leaderboard` (default 50, max 100, rows
     up to 200,000).
 - **Season.** `current` is the region's live season from `mplus_season_state`. On `world`
@@ -1129,12 +1223,18 @@ collections whole.
   the data), and `profile.role` (`tank`, `healer`, `dps`).
   - The slugs are the PvP endpoints'; the stored names (`Death Knight`, `Beast Mastery`)
     are never matched.
-  - `spec` needs `class`, and must be one of its specs. `spec` and `role` never come
-    together. Each of these is a **400**.
+  - `spec` needs `class`, and must be one of its specs. A role or sub-role never comes
+    with `spec`, and `class` with a role must have a spec of it (`checkRoleFilters`). Each
+    of these is a **400**.
+  - `class=mage&role=healer` used to answer an empty board. Since 2026-11-19 it is a 400,
+    as on the PvP endpoints.
+  - `subRole` reads the spec board with `profile.specId $in` the role's spec ids. Ids are
+    unique across classes, so `class` only narrows the list. `profile.role` is not checked:
+    a sub-role is always dps.
 - **Reads** are hinted by name to Rankwarden's board index for the filter
   (`MplusBoardIndexes` in `src/database/collections.ts`, live and archive, world and
   region), so a page is an index walk in score order. The count uses the same hint.
-  - The board is chosen in this order: the spec board with a spec; else the class board
+  - The board is chosen in this order: the spec board with a spec or a sub-role; else the class board
     with a class (a `role` beside it is checked on the documents); else the role board;
     else the score board.
   - The live collection has no score board without region. On `world`,
@@ -1460,6 +1560,10 @@ Raider.io quota); **S** marks a write to Rankwarden through its sync endpoint.
 | `/pve/bosses?raidSlug=current&top=3` | 200, one `difficulty` for the whole answer, ≤ 3 rankings per boss |
 | `/pve/mplus-seasons` | 200, 21 seasons, `affixes` non-empty |
 | `/pve/mplus-leaderboard?region=world&pageSize=5` | 200, `current: true`, scores non-increasing, `isFullyCovered` on each entry |
+| `/pve/mplus-leaderboard?subRole=melee&pageSize=5` | 200, `subRole: 'melee'`, every `profile.specId` a melee spec (81,004 on world) |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=shuffle&role=healer` | 200, `role: 'healer'`, `cutoff: null`, every entry's `bracket` a healer ladder |
+| `/pvp/leaderboard?region=us&seasonId=42&bracket=shuffle&subRole=ranged` | 200, Frost Mage present, no Frost Death Knight |
+| `/pvp/cutoffs?region=us&bracket=shuffle&role=healer` | 200, only healer specs, `total` their sum |
 | `/pve/mplus-runs?region=world&dungeon=murder-row&pageSize=5` | 200, every run's `dungeon.slug` is `murder-row`, `rank` 1..5 |
 | `/pve/mplus-run?keystoneRunId=19324786` | 200 **U**, `dungeon.slug` `murder-row`, `mythic_level` 22 |
 | `/pve/mplus-compositions?top=1000` | 200, ≤ 50 compositions of 5 members, `share`s sum to ≤ 1 |
@@ -1496,6 +1600,11 @@ costs real quota (a PvP page is ~14 Blizzard requests). Each S row rotates Rankw
 | `/pve/character?region=us&realmSlug=illidan&characterName=Bondd&raidProgression=nope` | 400, not in the catalogue; no Raider.io call |
 | `/pve/guild?region=eu&realmSlug=tarren-mill&guildName=Echo&showFullRoster=true&raidEncounters=tier-mn-1` | 400, one widget per call |
 | `/pve/mplus-leaderboard?class=mage&spec=fire&role=dps` | 400, spec and role never together |
+| `/pvp/leaderboard?…&role=tank&subRole=melee` (any of the three endpoints) | 400, "is only for role dps" |
+| `/pvp/leaderboard?region=eu&seasonId=42&bracket=shuffle&class=priest&role=tank` | 400, "has no tank spec" |
+| `/pvp/leaderboard?region=eu&seasonId=42&bracket=shuffle-mage-fire&role=dps` | 400, a spec ladder already names a spec |
+| `/pvp/leaderboard?region=eu&seasonId=41&bracket=3v3&role=dps` (an archived season) | 400, archived 3v3 has no class |
+| `/pvp/cutoffs?region=eu&bracket=shuffle&class=mage` (class without spec or role) | 400 |
 | `/pve/mplus-runs?season=season-nope` | 404 |
 | `/pve/mplus-runs?season=season-mn-1&dungeon=murder-row` | 404, not run in MN 1 |
 | `/pve/raid?raidSlug=nope` | 404 |

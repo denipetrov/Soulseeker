@@ -1,3 +1,4 @@
+import { classIdOf, specIdOf } from '../specs.js';
 import type { Tier, TierListSpec } from './tier-list.types.js';
 
 /** The rating representation and average rating count from: rows at or above it. */
@@ -251,7 +252,9 @@ export function scoreTierList(
       raw: densityPoints + representation[i]! + averageRating[i]!,
       spec: {
         class: s.class,
+        classId: classIdOf(s.class),
         spec: s.spec,
+        specId: specIdOf(s.class, s.spec),
         tier: 'D' as Tier,
         score: 0,
         topDensity: { top250, top500, top1000, top2500, top5000, score: round(densityPoints, 2) },

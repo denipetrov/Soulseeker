@@ -13,10 +13,18 @@ export interface CharacterSuggestion {
   realmSlug: string;
   realmName: string | null;
   className: string | null;
+  /** Blizzard's class id. */
+  classId: number | null;
   specName: string | null;
+  /** Blizzard's spec id. */
+  specId: number | null;
   /** The active spec's hero talent tree. Always null for Mythic+ characters. */
   heroTalents: string | null;
+  /** Blizzard's id for that tree. Always null for Mythic+ characters. */
+  heroTalentId: number | null;
   raceName: string | null;
+  /** Blizzard's race id. */
+  raceId: number | null;
   /** Lowercase: `alliance` or `horde`. */
   faction: string | null;
 }

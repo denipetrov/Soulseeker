@@ -6,6 +6,7 @@ import type { MplusCharacterDocument } from '../../characters/entities/mplus-cha
 import type { Env } from '../../config/env.schema.js';
 import { Collections, MplusBoardIndexes, type MplusBoardKind } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
+import { specsMatching } from '../../pvp/roles.js';
 import { CLASS_IDS, SPEC_IDS } from '../../pvp/specs.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
 import { CacheService } from '../../redis/cache.service.js';
@@ -87,6 +88,7 @@ export class MplusLeaderboardService {
       query.class ?? '-',
       query.spec ?? '-',
       query.role ?? '-',
+      query.subRole ?? '-',
       query.page,
       query.pageSize,
     ].join(':');
@@ -105,23 +107,28 @@ export class MplusLeaderboardService {
     season: string,
     live: boolean,
   ): Promise<MplusLeaderboardResponse> {
-    const kind: MplusBoardKind = query.spec
-      ? 'spec'
-      : query.class
-        ? 'class'
-        : query.role
-          ? 'role'
-          : 'score';
+    // A sub-role is a set of specs: the spec board, `profile.specId $in`, which
+    // MongoDB merges in score order (~20 ms 20,000 deep on world, index keys only).
+    const kind: MplusBoardKind =
+      query.spec || query.subRole ? 'spec' : query.class ? 'class' : query.role ? 'role' : 'score';
     const filter: Filter<MplusCharacterDocument> = { season };
     if (query.region !== WORLD) {
       filter.region = query.region as MplusCharacterDocument['region'];
     } else if (live && kind === 'score') {
       filter.region = { $in: [...RAIDERIO_REGIONS] };
     }
-    if (query.class) filter['profile.classId'] = CLASS_IDS[query.class];
-    if (query.class && query.spec)
-      filter['profile.specId'] = SPEC_IDS[`${query.class}-${query.spec}`];
-    if (query.role) filter['profile.role'] = query.role;
+    if (query.subRole) {
+      // Spec ids are unique across classes, so the class is in the ids already;
+      // and a sub-role is always dps.
+      filter['profile.specId'] = {
+        $in: specsMatching(query).map((pair) => SPEC_IDS[`${pair.class}-${pair.spec}`]!),
+      };
+    } else {
+      if (query.class) filter['profile.classId'] = CLASS_IDS[query.class];
+      if (query.class && query.spec)
+        filter['profile.specId'] = SPEC_IDS[`${query.class}-${query.spec}`];
+      if (query.role) filter['profile.role'] = query.role;
+    }
 
     const hint =
       MplusBoardIndexes[live ? 'live' : 'archive'][kind][
@@ -149,6 +156,7 @@ export class MplusLeaderboardService {
       class: query.class,
       spec: query.spec,
       role: query.role,
+      subRole: query.subRole,
       page: query.page,
       pageSize: query.pageSize,
       total,

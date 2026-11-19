@@ -14,7 +14,21 @@ describe('cutoffsQuerySchema', () => {
       bracket: 'shuffle',
       class: null,
       spec: null,
+      role: null,
+      subRole: null,
     });
+  });
+
+  it('takes a role or sub-role, with a class or not, but a class alone still needs a spec', () => {
+    expect(parse({ region: 'eu', bracket: 'shuffle', role: 'healer' }).success).toBe(true);
+    expect(parse({ region: 'eu', bracket: '3v3', class: 'druid', role: 'dps' }).data).toMatchObject(
+      { class: 'druid', spec: null, role: 'dps' },
+    );
+    expect(parse({ region: 'eu', bracket: 'shuffle', class: 'druid' }).success).toBe(false);
+    expect(
+      parse({ region: 'eu', bracket: 'shuffle', class: 'mage', spec: 'fire', subRole: 'ranged' })
+        .success,
+    ).toBe(false);
   });
 
   it('refuses 2v2, spec ladders, unknown regions and missing fields', () => {

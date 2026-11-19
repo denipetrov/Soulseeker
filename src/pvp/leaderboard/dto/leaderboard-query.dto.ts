@@ -3,24 +3,12 @@ import { z } from 'zod';
 import { requiredNumber } from '../../../common/pipes/required-number.js';
 
 import { CORE_BRACKETS, SPEC_FAMILIES } from '../../seasons/pvp-season.types.js';
+import { checkRoleFilters, roleSchema, subRoleSchema } from '../../roles.js';
+import { CLASSES } from '../../specs.js';
 import { pvpBoardSchema } from '../../world.js';
 
-/** Class slugs as Rankwarden stores them on the ratings rows and in ladder names. */
-export const CLASSES = [
-  'deathknight',
-  'demonhunter',
-  'druid',
-  'evoker',
-  'hunter',
-  'mage',
-  'monk',
-  'paladin',
-  'priest',
-  'rogue',
-  'shaman',
-  'warlock',
-  'warrior',
-] as const;
+/** Class slugs; kept in `specs.ts` with the specs, re-exported for older imports. */
+export { CLASSES } from '../../specs.js';
 
 export const DEFAULT_PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 100;
@@ -77,6 +65,8 @@ export const leaderboardQuerySchema = z
     spec: slug
       .optional()
       .meta({ description: 'Spec slug, e.g. `fire`, `beastmastery`. Needs class.' }),
+    role: roleSchema,
+    subRole: subRoleSchema,
     page: z.coerce.number().int().positive().default(1).meta({ description: '1-based page.' }),
     pageSize: z.coerce
       .number()
@@ -133,6 +123,12 @@ export const leaderboardQuerySchema = z
       return z.NEVER;
     }
 
+    const role = query.role ?? null;
+    const subRole = query.subRole ?? null;
+    if (!checkRoleFilters({ class: cls ?? null, spec: spec ?? null, role, subRole }, ctx)) {
+      return z.NEVER;
+    }
+
     if ((query.page - 1) * query.pageSize > MAX_OFFSET) {
       ctx.addIssue({ code: 'custom', path: ['page'], message: `is past row ${MAX_OFFSET}` });
       return z.NEVER;
@@ -144,6 +140,8 @@ export const leaderboardQuerySchema = z
       bracket: bracket as LeaderboardBracket,
       class: cls ?? null,
       spec: spec ?? null,
+      role,
+      subRole,
       page: query.page,
       pageSize: query.pageSize,
     };

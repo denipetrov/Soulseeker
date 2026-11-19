@@ -144,9 +144,13 @@ describe('GET /search/suggestions', () => {
         realmSlug: 'kazzak',
         realmName: 'Kazzak',
         className: 'Mage',
+        classId: 8,
         specName: 'Fire',
+        specId: 63,
         heroTalents: 'Sunfury',
+        heroTalentId: 44,
         raceName: 'Blood Elf',
+        raceId: 10,
         faction: 'horde',
       },
     ]);

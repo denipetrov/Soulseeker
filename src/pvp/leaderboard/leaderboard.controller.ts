@@ -23,6 +23,8 @@ const EXAMPLE: LeaderboardResponse = {
   bracket: 'shuffle',
   class: 'warrior',
   spec: 'arms',
+  role: null,
+  subRole: null,
   current: true,
   page: 1,
   pageSize: 50,
