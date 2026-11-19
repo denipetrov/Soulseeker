@@ -30,7 +30,9 @@ const EXAMPLE: TierListResponse = {
   specs: [
     {
       class: 'priest',
+      classId: 5,
       spec: 'discipline',
+      specId: 256,
       tier: 'S',
       score: 93.41,
       topDensity: {

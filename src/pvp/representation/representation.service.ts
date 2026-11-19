@@ -4,7 +4,11 @@ import type { Filter } from 'mongodb';
 import type { Region } from '../../blizzard/blizzard.constants.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
-import type { SpecRepresentationDocument } from '../entities/spec-representation.entity.js';
+import type {
+  SpecRepresentationDocument,
+  SpecShare,
+} from '../entities/spec-representation.entity.js';
+import { classIdOf, specIdOf } from '../specs.js';
 import { regionsOf } from '../world.js';
 import { combineSnapshots } from './combine.js';
 import {
@@ -136,7 +140,7 @@ export class RepresentationService {
       computedAt: new Date(combined.computedAt).toISOString(),
       total: combined.total,
       classified: combined.classified,
-      specs: [...(combined.specs ?? [])].sort((a, b) => b.count - a.count),
+      specs: withIds(combined.specs).sort((a, b) => b.count - a.count),
     };
 
     if (query.getEarliestDate) response.earliestDate = earliest ? day(earliest.date) : null;
@@ -187,7 +191,7 @@ export class RepresentationService {
         computedAt: new Date(combined.computedAt).toISOString(),
         total: combined.total,
         classified: combined.classified,
-        specs: [...(combined.specs ?? [])].sort((a, b) => b.count - a.count),
+        specs: withIds(combined.specs).sort((a, b) => b.count - a.count),
       };
     });
 
@@ -211,3 +215,12 @@ export class RepresentationService {
 }
 
 const DAY_MS = 86_400_000;
+
+/** Each spec as stored, with Blizzard's class and spec ids beside the slugs. */
+function withIds(specs: readonly SpecShare[] | undefined): SpecShare[] {
+  return (specs ?? []).map((share) => ({
+    ...share,
+    classId: classIdOf(share.class),
+    specId: specIdOf(share.class, share.spec),
+  }));
+}

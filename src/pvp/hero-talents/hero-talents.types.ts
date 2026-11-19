@@ -13,6 +13,8 @@ export interface HeroTalentUse {
 /** One spec's top characters and the hero talent trees they play. */
 export interface SpecHeroTalents {
   spec: string;
+  /** Blizzard's spec id. */
+  specId?: number | null;
   /** Characters read: the spec's top `top`, or fewer on a shorter ladder. */
   characters: number;
   /**
@@ -29,6 +31,8 @@ export interface SpecHeroTalents {
 
 export interface ClassHeroTalents {
   class: string;
+  /** Blizzard's class id. */
+  classId: number | null;
   specs: SpecHeroTalents[];
 }
 

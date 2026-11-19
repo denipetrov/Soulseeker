@@ -2,6 +2,7 @@ import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { Cutoff } from '../seasons/pvp-season.types.js';
 import type { PvpBoard } from '../world.js';
 import type { LeaderboardBracket } from './dto/leaderboard-query.dto.js';
+import type { Role, SubRole } from '../roles.js';
 
 /**
  * One row of a leaderboard.
@@ -41,12 +42,21 @@ export interface LeaderboardEntry {
    */
   previousRating?: number | null;
   class?: string | null;
+  /** Blizzard's class id for `class`. */
+  classId?: number | null;
   spec?: string | null;
+  /** Blizzard's spec id for `class` and `spec`, as `/pve` answers carry it. */
+  specId?: number | null;
   gender?: string | null;
+  /** The hero talent tree's name, on this ladder (its spec's loadout on Shuffle and Blitz). */
   heroTalents?: string | null;
+  /** Blizzard's id for that tree. */
+  heroTalentId?: number | null;
   level?: number | null;
   profileStatus?: string | null;
   race?: string | null;
+  /** Blizzard's race id. */
+  raceId?: number | null;
 }
 
 export interface LeaderboardResponse {
@@ -56,6 +66,10 @@ export interface LeaderboardResponse {
   bracket: LeaderboardBracket;
   class: string | null;
   spec: string | null;
+  /** `tank`, `healer` or `dps`: only specs of that role. */
+  role: Role | null;
+  /** `melee` or `ranged`: only damage dealers of that kind. */
+  subRole: SubRole | null;
   /** Served from the live ratings (true) or from the season's archive (false). */
   current: boolean;
   /** 1-based. A page past the last one answers with no entries, not an error. */

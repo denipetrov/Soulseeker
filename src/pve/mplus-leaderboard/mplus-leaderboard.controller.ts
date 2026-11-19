@@ -27,6 +27,7 @@ const EXAMPLE: MplusLeaderboardResponse = {
   class: 'shaman',
   spec: 'elemental',
   role: null,
+  subRole: null,
   page: 1,
   pageSize: 50,
   total: 4411,

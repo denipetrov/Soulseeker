@@ -4,6 +4,7 @@ import type {
   RatingRow,
 } from '../../characters/entities/character.entity.js';
 import { cutoffOf } from '../seasons/pvp-season.mapper.js';
+import { classIdOf, specIdOf } from '../specs.js';
 import type { Cutoff, Faction, PvpSeason } from '../seasons/pvp-season.types.js';
 import type { LeaderboardEntry } from './leaderboard.types.js';
 
@@ -56,19 +57,19 @@ export function slugOf(name: string | null | undefined): string | null {
  * handbook, "Rules for readers"). On 2v2, 3v3 and RBG, which are not per spec,
  * it is the active spec's.
  */
-export function heroTalentsFor(
+export function heroTalentTreeFor(
   character: BoardCharacter | undefined,
   spec: string | null,
   perSpec: boolean,
-): string | null {
+): { id: number; name: string } | null {
   const profile = character?.profile;
   if (!profile) return null;
 
-  if (!perSpec) return profile.heroTalentTree?.name ?? null;
+  if (!perSpec) return profile.heroTalentTree ?? null;
 
   const loadout = profile.talentLoadouts?.find((entry) => slugOf(entry.spec?.name) === spec);
 
-  return loadout?.heroTalentTree?.name ?? null;
+  return loadout?.heroTalentTree ?? null;
 }
 
 const lower = (value: string | null | undefined): string | null =>
@@ -89,6 +90,7 @@ export function currentEntry(
   // active spec, which the row only has once the character is enriched.
   const cls = row.class ?? slugOf(profile?.class?.name);
   const spec = row.spec ?? (perSpec ? null : slugOf(profile?.spec?.name));
+  const heroTalentTree = heroTalentTreeFor(character, spec, perSpec);
 
   return {
     region: row.region,
@@ -105,12 +107,16 @@ export function currentEntry(
     inTitleRange: inTitleRange(row.rating, season ? cutoffOf(season, row.bracket) : null, faction),
     previousRating: standing?.previousRating ?? null,
     class: cls,
+    classId: classIdOf(cls),
     spec,
+    specId: specIdOf(cls, spec),
     gender: lower(profile?.gender),
-    heroTalents: heroTalentsFor(character, spec, perSpec),
+    heroTalents: heroTalentTree?.name ?? null,
+    heroTalentId: heroTalentTree?.id ?? null,
     level: profile?.level ?? null,
     profileStatus: character?.profileStatus ?? null,
     race: profile?.race?.name ?? null,
+    raceId: profile?.race?.id ?? null,
   };
 }
 

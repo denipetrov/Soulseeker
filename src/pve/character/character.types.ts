@@ -4,8 +4,14 @@ import type { RaiderIoRegion } from '../../raiderio/raiderio.constants.js';
 export interface PveCharacterBase {
   name: string;
   race: string;
+  /** Blizzard's race id, from `race` and `faction`. Added per answer, not cached. */
+  raceId?: number | null;
   class: string;
+  /** Blizzard's class id. Added per answer, not cached. */
+  classId?: number | null;
   activeSpecName: string | null;
+  /** Blizzard's spec id of the active spec. Added per answer, not cached. */
+  activeSpecId?: number | null;
   /** As Raider.io spells it: `DPS`, `HEALING`, `TANK`. */
   activeSpecRole: string | null;
   gender: string | null;
@@ -173,6 +179,10 @@ export interface PveCharacterResponse extends Partial<PveRunLists> {
   guild?: { name: string; realm: string | null } | null;
   gear?: PveGear | null;
   talentLoadout?: Record<string, unknown> | null;
+  /** Whole page only: the active hero talent tree's name, from `talentLoadout`. */
+  heroTalents?: string | null;
+  /** Whole page only: Blizzard's id for that tree (Raider.io uses the same ids). */
+  heroTalentId?: number | null;
   raidProgression?: Record<string, Record<string, unknown>>;
   raidAchievementCurve?: RaidAchievementCurve[];
   /**

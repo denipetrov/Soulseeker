@@ -25,9 +25,13 @@ describe('search mapper', () => {
       realmSlug: 'emerald-dream',
       realmName: 'Emerald Dream',
       className: 'Death Knight',
+      classId: 6,
       specName: 'Unholy',
+      specId: 252,
       heroTalents: "San'layn",
+      heroTalentId: 31,
       raceName: 'Human',
+      raceId: 1,
       faction: 'alliance',
     });
   });

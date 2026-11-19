@@ -3,6 +3,7 @@ import type { LeaderboardEntry } from '../leaderboard/leaderboard.types.js';
 import type { Cutoff } from '../seasons/pvp-season.types.js';
 import type { PvpBoard } from '../world.js';
 import type { CutoffBracket } from './dto/cutoffs-query.dto.js';
+import type { Role, SubRole } from '../roles.js';
 
 /**
  * How many characters of one spec are at or above the title cutoff.
@@ -15,7 +16,11 @@ import type { CutoffBracket } from './dto/cutoffs-query.dto.js';
  */
 export interface SpecCutoffCount {
   class: string | null;
+  /** Blizzard's class id; null with `class`. */
+  classId?: number | null;
   spec: string | null;
+  /** Blizzard's spec id; null with `spec`. */
+  specId?: number | null;
   count: number;
   /** Shuffle and Blitz only, one region: this spec's own cutoff. */
   cutoff?: SpecLadderCutoff;
@@ -32,6 +37,12 @@ export interface CutoffsResponse {
   /** A region, or `world`: every region together, each counted against its own cutoffs. */
   region: PvpBoard;
   bracket: CutoffBracket;
+  /** With `role` or `subRole`: only that class's specs are counted. */
+  class: string | null;
+  /** `tank`, `healer` or `dps`: only specs of that role are counted, and `total` is theirs. */
+  role: Role | null;
+  /** `melee` or `ranged`: only damage dealers of that kind. */
+  subRole: SubRole | null;
   seasonId: number;
   /** As Blizzard names it: `Player vs. Player (Midnight Season 2)`. */
   seasonName: string | null;

@@ -14,6 +14,9 @@ export interface SpecShare {
   /** Slugs, as on the ladders: `warrior`, `arms`. */
   class: string;
   spec: string;
+  /** Blizzard's class and spec ids: added to answers, not stored by Rankwarden. */
+  classId?: number | null;
+  specId?: number | null;
   count: number;
   /** Of the snapshot's `classified`, 0–1. */
   share: number;

@@ -185,6 +185,8 @@ describe('scoreTierList', () => {
     expect(list.map((s) => s.spec)).toEqual(['fire', 'protection']);
     expect(list[1]).toEqual({
       class: 'warrior',
+      classId: 1,
+      specId: 73,
       spec: 'protection',
       // Of two specs the second is C: 90 % of 2 rounds to 2.
       tier: 'C',

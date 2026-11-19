@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Cutoff } from '../seasons/pvp-season.types.js';
-import { heroTalentsFor, inTitleRange, slugOf, type BoardCharacter } from './leaderboard.mapper.js';
+import {
+  heroTalentTreeFor,
+  inTitleRange,
+  slugOf,
+  type BoardCharacter,
+} from './leaderboard.mapper.js';
 
 const shared: Cutoff = { rating: 2858, title: 'Gladiator', achievementId: 1, factions: null };
 const split: Cutoff = {
@@ -32,7 +37,7 @@ describe('inTitleRange', () => {
   });
 });
 
-describe('heroTalentsFor', () => {
+describe('heroTalentTreeFor', () => {
   const warrior = {
     profile: {
       heroTalentTree: { id: 1, name: 'Mountain Thane' },
@@ -52,16 +57,16 @@ describe('heroTalentsFor', () => {
   } as unknown as BoardCharacter;
 
   it("takes the ladder's spec loadout on a spec ladder, not the active spec", () => {
-    expect(heroTalentsFor(warrior, 'arms', true)).toBe('Slayer');
-    expect(heroTalentsFor(warrior, 'protection', true)).toBeNull();
+    expect(heroTalentTreeFor(warrior, 'arms', true)).toEqual({ id: 2, name: 'Slayer' });
+    expect(heroTalentTreeFor(warrior, 'protection', true)).toBeNull();
   });
 
   it('takes the active tree on 2v2, 3v3 and RBG', () => {
-    expect(heroTalentsFor(warrior, null, false)).toBe('Mountain Thane');
+    expect(heroTalentTreeFor(warrior, null, false)).toEqual({ id: 1, name: 'Mountain Thane' });
   });
 
   it('is null for a character not enriched yet', () => {
-    expect(heroTalentsFor(undefined, 'arms', true)).toBeNull();
+    expect(heroTalentTreeFor(undefined, 'arms', true)).toBeNull();
   });
 });
 

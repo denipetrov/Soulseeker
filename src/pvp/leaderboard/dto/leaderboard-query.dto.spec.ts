@@ -13,9 +13,27 @@ describe('leaderboardQuerySchema', () => {
       bracket: '3v3',
       class: null,
       spec: null,
+      role: null,
+      subRole: null,
       page: 1,
       pageSize: 50,
     });
+  });
+
+  it('takes a role and a sub-role, alone or with a class, never with a spec', () => {
+    expect(parse({ bracket: 'shuffle', role: 'Healer' }).data).toMatchObject({
+      role: 'healer',
+      subRole: null,
+    });
+    expect(parse({ bracket: 'shuffle', class: 'hunter', subRole: 'melee' }).data).toMatchObject({
+      class: 'hunter',
+      role: null,
+      subRole: 'melee',
+    });
+    expect(parse({ bracket: 'shuffle-mage-fire', role: 'dps' }).success).toBe(false);
+    expect(parse({ bracket: 'shuffle', role: 'tank', subRole: 'melee' }).success).toBe(false);
+    expect(parse({ bracket: 'shuffle', class: 'priest', role: 'tank' }).success).toBe(false);
+    expect(parse({ bracket: 'shuffle', role: 'support' }).success).toBe(false);
   });
 
   it('splits a full spec ladder name into family, class and spec', () => {

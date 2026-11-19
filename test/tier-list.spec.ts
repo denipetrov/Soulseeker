@@ -145,7 +145,9 @@ describe('GET /pvp/tier-list', () => {
 
     expect(protection).toEqual({
       class: 'warrior',
+      classId: 1,
       spec: 'protection',
+      specId: 73,
       tier: expect.any(String),
       score: 0,
       topDensity: { top250: 0, top500: 0, top1000: 0, top2500: 0, top5000: 0, score: 0 },

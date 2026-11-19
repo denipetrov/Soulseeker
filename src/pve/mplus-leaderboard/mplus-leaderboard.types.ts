@@ -43,6 +43,8 @@ export interface MplusLeaderboardResponse {
   class: string | null;
   spec: string | null;
   role: string | null;
+  /** `melee` or `ranged`: only damage dealers of that kind. */
+  subRole: string | null;
   page: number;
   pageSize: number;
   total: number;

@@ -11,10 +11,10 @@ export const PVP_CHARACTER_PROJECTION = {
   realmSlug: 1,
   faction: 1,
   'profile.realmName': 1,
-  'profile.class.name': 1,
-  'profile.spec.name': 1,
-  'profile.heroTalentTree.name': 1,
-  'profile.race.name': 1,
+  'profile.class': 1,
+  'profile.spec': 1,
+  'profile.heroTalentTree': 1,
+  'profile.race': 1,
 } as const;
 
 export const MPLUS_CHARACTER_PROJECTION = {
@@ -24,8 +24,11 @@ export const MPLUS_CHARACTER_PROJECTION = {
   realmSlug: 1,
   realmName: 1,
   faction: 1,
+  'profile.classId': 1,
   'profile.className': 1,
+  'profile.specId': 1,
   'profile.specName': 1,
+  'profile.raceId': 1,
   'profile.raceName': 1,
 } as const;
 
@@ -47,9 +50,13 @@ export function pvpCharacterSuggestion(
     realmSlug: doc.realmSlug,
     realmName: profile?.realmName ?? null,
     className: profile?.class?.name ?? null,
+    classId: profile?.class?.id ?? null,
     specName: profile?.spec?.name ?? null,
+    specId: profile?.spec?.id ?? null,
     heroTalents: profile?.heroTalentTree?.name ?? null,
+    heroTalentId: profile?.heroTalentTree?.id ?? null,
     raceName: profile?.race?.name ?? null,
+    raceId: profile?.race?.id ?? null,
     faction: faction(doc.faction),
   };
 }
@@ -66,9 +73,13 @@ export function mplusCharacterSuggestion(
     realmSlug: doc.realmSlug,
     realmName: doc.realmName ?? null,
     className: doc.profile?.className ?? null,
+    classId: doc.profile?.classId ?? null,
     specName: doc.profile?.specName ?? null,
+    specId: doc.profile?.specId ?? null,
     heroTalents: null,
+    heroTalentId: null,
     raceName: doc.profile?.raceName ?? null,
+    raceId: doc.profile?.raceId ?? null,
     faction: faction(doc.faction),
   };
 }

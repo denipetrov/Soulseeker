@@ -131,6 +131,7 @@ describe('GET /pvp/hero-talents', () => {
     expect(body.classes.flatMap((c: Json) => c.specs)).toHaveLength(40);
     expect(specOf(body, 'warrior', 'arms')).toEqual({
       spec: 'arms',
+      specId: 71,
       characters: 3,
       // Character 3 has no profile yet.
       covered: 2,
@@ -142,8 +143,10 @@ describe('GET /pvp/hero-talents', () => {
         { id: 63, name: 'Mountain Thane', count: 1, share: 0.5 },
       ],
     });
+    expect(body.classes.find((c: Json) => c.class === 'mage').classId).toBe(8);
     expect(specOf(body, 'mage', 'fire')).toEqual({
       spec: 'fire',
+      specId: 63,
       characters: 0,
       covered: 0,
       minRating: null,

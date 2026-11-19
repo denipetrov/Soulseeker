@@ -27,9 +27,11 @@ const EXAMPLE: HeroTalentsResponse = {
   classes: [
     {
       class: 'warrior',
+      classId: 1,
       specs: [
         {
           spec: 'arms',
+          specId: 71,
           characters: 50,
           covered: 46,
           minRating: 2611,

@@ -9,6 +9,7 @@ import { Collections, type ReadCollection } from '../../database/collections.js'
 import { MongoService } from '../../database/mongo.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { CLASSES } from '../leaderboard/dto/leaderboard-query.dto.js';
+import { classIdOf, specIdOf } from '../specs.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import { SPEC_FAMILIES, type PvpSeason } from '../seasons/pvp-season.types.js';
 import { SPECS_BY_CLASS } from '../specs.js';
@@ -123,15 +124,16 @@ export class HeroTalentsService {
 
     const profiles = await this.profilesOf(seasonId, tops.flat());
 
-    const stats = pairs.map(({ spec }, i) =>
-      specStats(
+    const stats = pairs.map(({ cls, spec }, i) => ({
+      ...specStats(
         spec,
         tops[i]!.map((row) => ({
           rating: row.rating,
           tree: treeOf(profiles.get(`${row.region}:${row.characterId}`), spec, perSpec),
         })),
       ),
-    );
+      specId: specIdOf(cls, spec),
+    }));
 
     return {
       region: query.region,
@@ -142,6 +144,7 @@ export class HeroTalentsService {
       computedAt: new Date().toISOString(),
       classes: CLASSES.map((cls) => ({
         class: cls,
+        classId: classIdOf(cls),
         specs: stats.filter((_, i) => pairs[i]!.cls === cls),
       })),
     };
