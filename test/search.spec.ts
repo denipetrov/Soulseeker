@@ -59,6 +59,7 @@ const guild = (name: string) => ({
   searchName: searchNameOf(name),
   region: 'eu',
   realm: { slug: 'blackhand', name: 'Blackhand' },
+  faction: 'horde',
 });
 
 async function suggestions(type: string, q: string): Promise<{ status: number; body: Json }> {
@@ -110,8 +111,8 @@ beforeAll(async () => {
   await db.collection('guilds').insertMany([
     { ...guild('Bíbà Club'), logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png' },
     guild('Other Guild'),
-    // Stored without a logo: answers null.
-    guild('Bibalogoless'),
+    // Stored without a logo or faction: both answer null.
+    { ...guild('Bibalogoless'), faction: null },
   ]);
 
   token = (await anonymousTokens(app)).access_token;
@@ -182,6 +183,7 @@ describe('GET /search/suggestions', () => {
         region: 'eu',
         realmSlug: 'blackhand',
         realmName: 'Blackhand',
+        faction: 'horde',
         logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png',
       },
       {
@@ -189,6 +191,7 @@ describe('GET /search/suggestions', () => {
         region: 'eu',
         realmSlug: 'blackhand',
         realmName: 'Blackhand',
+        faction: null,
         logo: null,
       },
     ]);

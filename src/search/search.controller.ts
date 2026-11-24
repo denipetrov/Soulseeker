@@ -42,6 +42,7 @@ const EXAMPLE: SuggestionsResponse = {
       region: 'eu',
       realmSlug: 'blackhand',
       realmName: 'Blackhand',
+      faction: 'horde',
       logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png',
     },
   ],
