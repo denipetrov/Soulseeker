@@ -107,7 +107,12 @@ beforeAll(async () => {
   await db
     .collection('mplus_characters')
     .insertMany([mplus('Bibà'), mplus('Bibastruja'), mplus('Bibaprev', { season: 'season-mn-1' })]);
-  await db.collection('guilds').insertMany([guild('Bíbà Club'), guild('Other Guild')]);
+  await db.collection('guilds').insertMany([
+    { ...guild('Bíbà Club'), logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png' },
+    guild('Other Guild'),
+    // Stored without a logo: answers null.
+    guild('Bibalogoless'),
+  ]);
 
   token = (await anonymousTokens(app)).access_token;
 });
@@ -172,7 +177,20 @@ describe('GET /search/suggestions', () => {
     expect(names(body.characters)).toEqual(['Bibà', 'Bibastruja']);
     expect(body.characters[0]).toMatchObject({ heroTalents: null, faction: 'alliance' });
     expect(body.guilds).toEqual([
-      { name: 'Bíbà Club', region: 'eu', realmSlug: 'blackhand', realmName: 'Blackhand' },
+      {
+        name: 'Bíbà Club',
+        region: 'eu',
+        realmSlug: 'blackhand',
+        realmName: 'Blackhand',
+        logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png',
+      },
+      {
+        name: 'Bibalogoless',
+        region: 'eu',
+        realmSlug: 'blackhand',
+        realmName: 'Blackhand',
+        logo: null,
+      },
     ]);
   });
 

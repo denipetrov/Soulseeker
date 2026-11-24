@@ -266,6 +266,9 @@ replicas at once cost twice the budget and was synced to Rankwarden twice, which
   - PvP characters Rankwarden has not enriched yet answer null for class, spec, race
     and realm name.
   - Faction is lowercased for both.
+  - Guilds carry `logo`: Raider.io's image URL as Rankwarden stores it on `guilds`
+    (`https://cdn.raiderio.net/images/...`), null when it has none. It is the same field
+    `GuildRefs` gives the raid and boss boards.
 - **Cache.** Whole answers are cached in Redis per type and prefix for
   `SEARCH_CACHE_TTL_SECONDS` (60).
 

@@ -36,7 +36,15 @@ const EXAMPLE: SuggestionsResponse = {
       faction: 'alliance',
     },
   ],
-  guilds: [{ name: 'Bad Call', region: 'eu', realmSlug: 'blackhand', realmName: 'Blackhand' }],
+  guilds: [
+    {
+      name: 'Bad Call',
+      region: 'eu',
+      realmSlug: 'blackhand',
+      realmName: 'Blackhand',
+      logo: 'https://cdn.raiderio.net/images/site/horde_icon4.png',
+    },
+  ],
 };
 
 @ApiTags('search')
