@@ -5,6 +5,7 @@ import type { RaidBoardsDocument, RaidRankedGuild } from '../../characters/entit
 import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PveCatalogue, type CatalogueRaid } from '../../seasons/pve-catalogue.service.js';
 import { CURRENT_RAID } from '../bosses/dto/bosses-query.dto.js';
@@ -37,6 +38,7 @@ export class RaidService {
     private readonly cache: CacheService,
     private readonly catalogue: PveCatalogue,
     private readonly guildRefs: GuildRefs,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('RAID_BOARD_CACHE_TTL_SECONDS', { infer: true });
@@ -63,7 +65,15 @@ export class RaidService {
       this.cacheTtlSeconds,
     );
 
-    return response!;
+    // Hidden guilds off the board as it is served, so a cached board follows the
+    // list at once; the others keep their ranks as Raider.io gave them.
+    const hidden = await this.hidden.current();
+    if (hidden.guilds.size === 0) return response!;
+
+    return {
+      ...response!,
+      guilds: response!.guilds.filter((entry) => !hidden.isGuildHidden(entry.guild.id)),
+    };
   }
 
   private async load(raid: CatalogueRaid, query: RaidQuery): Promise<RaidResponse> {

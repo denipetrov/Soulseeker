@@ -266,6 +266,9 @@ replicas at once cost twice the budget and was synced to Rankwarden twice, which
   - PvP characters Rankwarden has not enriched yet answer null for class, spec, race
     and realm name.
   - Faction is lowercased for both.
+  - Guilds carry `faction` (lowercase, as on characters; null when not stored) and `logo`: Raider.io's image URL as Rankwarden stores it on `guilds`
+    (`https://cdn.raiderio.net/images/...`), null when it has none. It is the same field
+    `GuildRefs` gives the raid and boss boards.
 - **Cache.** Whole answers are cached in Redis per type and prefix for
   `SEARCH_CACHE_TTL_SECONDS` (60).
 
@@ -1344,6 +1347,115 @@ encounter, with its boards (`bossRankings.<board>.<difficulty>`, the first 50 gu
   - The current raid with every boss is ~113 KB before compression and takes ~50 ms
     uncached.
 - **404** for a raid the catalogue lacks, or a boss the raid does not have.
+
+### Hidden players and guilds
+
+Rankwarden can hide a player or a guild (`POST /hidden` there, commit 45f842f, 2026-11-25).
+It keeps the list in `hidden_entries` and still collects their data. Soulseeker leaves them
+out of every answer, and changes the list only through Rankwarden.
+
+- **Endpoint.** `POST /admin/hidden` (`src/hidden/admin-hidden.controller.ts`).
+  - Body: `{ kind: 'character', region, realmSlug, name, hidden }`, or
+    `{ kind: 'guild', guildId | (region, realmSlug, name), hidden }`. A guild named by realm
+    and name gets its id from `guilds` through `guild_search` (exact name wins): 404 if not
+    stored.
+  - Forwarded by `RankwardenSyncClient.setHidden` with one attempt. The DTO mirror is
+    `src/rankwarden/dto/set-hidden.dto.ts`; keep it in step with Rankwarden's.
+  - On success, `HiddenList.invalidate()`. Answers: 200 with Rankwarden's body, 400, 401,
+    404, or 502 when Rankwarden failed and nothing changed.
+- **Auth.** `@Public()` (no OAuth token: any visitor can get one) plus `AdminKeyGuard`: the
+  `X-Admin-Key` header must equal `ADMIN_API_KEY`, compared through SHA-256 digests in
+  constant time.
+  - The key is at least 32 characters, a secret, redacted in health output, and generated
+    and kept by `create-secrets.sh`.
+  - With no key configured the route answers 404, so it is off, never open.
+- **The list is the source of truth**, not the `hidden` flags Rankwarden copies onto
+  `characters`, `mplus_characters` and `guilds`. The reasons:
+  - the `*_ratings` rows and both archives carry no flag;
+  - a local database may predate the flags;
+  - `{ hidden: true }` without Rankwarden's `*_hidden` index would scan a whole season.
+- **`HiddenList`** (`src/hidden/hidden-list.service.ts`, global module):
+  - `current()` gives a `HiddenSet`: player keys `region/realmslug/nfc-lowercased-name`
+    (Rankwarden's `mplusCharacterKey`, see `hiddenCharacterKey`) and guild ids. It is cached
+    in Redis (`hidden:list`, `HIDDEN_LIST_TTL_SECONDS`, 60 s).
+  - `pvpCharacterIds()` maps hidden players to Blizzard character ids. It reads `characters`
+    through `character_search` by folded name, then matches the exact key, as Rankwarden
+    does. The ids are stable across seasons, so they filter live ladders and the archive
+    alike.
+  - `pvpExclusion(regions)` builds `$nor` on `{ region, characterId $in }`, or null when
+    nobody is hidden there.
+  - `invalidate()` drops the list, the ids and the cached answers filtered in the query
+    (`pvp:board:`, `pve:mplus-board:`, `search:`), through `CacheService.deleteByPrefix`
+    (SCAN, never KEYS).
+- **Where:**
+  - **In the query**, so totals and paging stay exact: search (PvP `$nor` by id; M+ `key
+    $nin`; guilds `id $nin`), `/pvp/leaderboard` live and archived, `/pvp/cutoffs` counts and
+    lists, and `/pve/mplus-leaderboard` (`key $nin`, live and archive both carry `key`).
+  - **At serve time**, so cached answers follow the list at once:
+    - runs (`anonymizeStoredRoster`), and run details and boss kills
+      (`anonymizeRaiderIoRoster`);
+    - guild member lists (`isHiddenMember`, realm slug from `profile_url` else `realmSlugOf`);
+    - raid boards and bosses (hidden guilds filtered out; the rest keep their ranks).
+  - **Before anything**, the same 404 as "no such character / guild": `/pvp/character` and
+    `/pve/character` (no cache, upstream or sync), and `/pve/guild` when `guilds` holds it
+    under a hidden id.
+  - **Not filtered:** statistics that name nobody (tier lists, hero talents, both spec
+    representations, compositions).
+- **Anonymised** = Raider.io's own shape: `rioCharacterId: 0`, `characterName: 'Anonymous'`,
+  `realmSlug: 'anonymous'`, `anonymized: true`. For Raider.io rosters, `character.id: 0`,
+  `name: 'Anonymous'`, `anonymized: true`; class, spec, race, level, talents, role and items
+  are kept; guild, ranks and `oldCharacter` are removed.
+- **Tests:** `test/hidden.spec.ts` (a fake Rankwarden that writes `hidden_entries`; before and
+  after, then shown again) and `src/hidden/anonymize.spec.ts`.
+
+### Translated names
+
+`GET /i18n/names?locale=` (`src/localization/`) gives the front end game names in one
+language. Raider.io has no localization: tested 2026-11-25. `locale`, `lang` and the
+like are refused with a 400 "Invalid request query input", and `Accept-Language` is
+ignored. So the front end translates PvE names by id or slug.
+
+- **Languages.** `LOCALES` (`blizzard.constants.ts`): Blizzard's 12 plus `zh_CN`, which was
+  added the same day. It works on the global hosts for Game Data and Profile alike, so
+  `/pvp/character?locale=zh_CN` works too. The user's languages are en_US, es_ES, pt_BR,
+  fr_FR, de_DE, ru_RU, ko_KR and zh_CN; the rest cost nothing extra. The query takes any
+  case and `-`.
+- **Source.** `GameDataApi` (`src/blizzard/game-data.api.ts`) reads 8 indexes from
+  `BLIZZARD_REGION` (US when that is `cn`), each with `locale: null`.
+  `BlizzardHttpService.get` leaves the locale out for `null`, and Blizzard then names
+  everything in every language at once (`{ en_US, de_DE, … }`).
+  - Paths are configuration: `BLIZZARD_PATH_PLAYABLE_CLASSES`, `…_SPECIALIZATIONS`,
+    `…_RACES`, `…_TALENT_TREES` (hero trees), `…_KEYSTONE_AFFIXES`, `…_KEYSTONE_DUNGEONS`
+    (the dynamic namespace), `…_JOURNAL_INSTANCES` and `…_JOURNAL_ENCOUNTERS`.
+  - Validated with `src/blizzard/schemas/game-data-index.schema.ts`.
+- **Builder** (`game-names.builder.ts`, pure, unit-tested): `buildGameNames` turns the
+  indexes plus the catalogue (`PveCatalogue.raids()` and `mplus_dungeons`) into one
+  document with every language. `namesIn` picks one language, falling back to English.
+  - Classes, specs, races, hero trees and affixes are by Blizzard id.
+  - Dungeons are by `challengeModeId`, which is Blizzard's keystone dungeon id, else by
+    English name.
+  - Raids and bosses are by English name through `nameKey` / `shortNameKey`
+    (`src/common/utils/name-key.ts`, shared with the per-boss kills).
+  - An `Awakened ` / `Fated ` re-release falls back to the original raid's name.
+  - What finds no match is left out (the front end keeps its English) and logged at warn,
+    with the list at debug.
+- **Real data (2026-11-25).**
+  - Everything matched except the `tier-mn-1` raid name and Halondrus (Blizzard has
+    "Halondrus the Reclaimer").
+  - One language is 11–16 KB.
+  - The first build takes ~1.2 s; later answers take ~6 ms.
+- **Cache.** `ss:cache:i18n:game-names`, one value for every language.
+  - Fresh for `I18N_NAMES_TTL_SECONDS` (a week), and kept `I18N_NAMES_STALE_SECONDS`
+    (30 days) more.
+  - Rebuilt in one `SharedFlight` across replicas.
+  - When Blizzard fails, the kept copy is served; with nothing kept, it is 502, or 503 for
+    a spent budget.
+  - To pick up a new patch's names now, delete the key.
+- **Not covered:** item and spell names (gear, talents). The front end uses Wowhead
+  tooltips for those.
+- **Tests:** `src/localization/game-names.builder.spec.ts` and `test/i18n-names.spec.ts`. The
+  integration test checks that the 8 requests carry no `locale`, the namespaces, every
+  language from one build, the stale copy and the 502.
 
 ## 8. Rankwarden sync
 

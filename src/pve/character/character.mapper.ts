@@ -2,6 +2,7 @@ import { SPECIALIZATIONS } from '@denipetrov/spirit-link/constants';
 
 import type { CharacterRaidEncountersPayload } from '../../blizzard/schemas/character-raid-encounters.schema.js';
 import { raceIdOf } from '../../characters/races.js';
+import { nameKey, shortNameKey } from '../../common/utils/name-key.js';
 import type { RaiderIoRegion } from '../../raiderio/raiderio.constants.js';
 import type {
   RaiderIoBestRun,
@@ -174,21 +175,6 @@ export function topPercentOf(
 
   return null;
 }
-
-/** A name compared across Blizzard and Raider.io: no case, accents, spaces or punctuation. */
-const nameKey = (name: string) =>
-  name
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-
-/**
- * The same, short: without a leading "The" and anything after a comma. The two
- * sites disagree on exactly those: Blizzard's "Sikran, Captain of the Sureki"
- * and "The One-Armed Bandit" are Raider.io's "Sikran" and "One-Armed Bandit".
- */
-const shortNameKey = (name: string) => nameKey(name.split(',')[0]!.replace(/^the\s+/i, ''));
 
 const difficultyOf = (type: string): RaidDifficulty | null => {
   const key = type.toLowerCase();

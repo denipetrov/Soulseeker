@@ -32,7 +32,14 @@ export const MPLUS_CHARACTER_PROJECTION = {
   'profile.raceName': 1,
 } as const;
 
-export const GUILD_PROJECTION = { _id: 0, name: 1, region: 1, realm: 1 } as const;
+export const GUILD_PROJECTION = {
+  _id: 0,
+  name: 1,
+  region: 1,
+  realm: 1,
+  faction: 1,
+  logo: 1,
+} as const;
 
 /** PvP stores `ALLIANCE`, Raider.io `alliance`: one spelling for the front end. */
 function faction(value: string | null | undefined): string | null {
@@ -85,12 +92,14 @@ export function mplusCharacterSuggestion(
 }
 
 export function guildSuggestion(
-  doc: Pick<GuildDocument, 'name' | 'region' | 'realm'>,
+  doc: Pick<GuildDocument, 'name' | 'region' | 'realm' | 'faction' | 'logo'>,
 ): GuildSuggestion {
   return {
     name: doc.name,
     region: doc.region,
     realmSlug: doc.realm.slug,
     realmName: doc.realm.name,
+    faction: faction(doc.faction),
+    logo: doc.logo ?? null,
   };
 }

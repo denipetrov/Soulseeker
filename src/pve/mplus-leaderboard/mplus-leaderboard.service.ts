@@ -9,6 +9,7 @@ import { MongoService } from '../../database/mongo.service.js';
 import { specsMatching } from '../../pvp/roles.js';
 import { CLASS_IDS, SPEC_IDS } from '../../pvp/specs.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { WORLD } from '../bosses/dto/bosses-query.dto.js';
 import { MplusSeasonResolver } from '../shared/mplus-season.resolver.js';
@@ -73,6 +74,7 @@ export class MplusLeaderboardService {
     private readonly mongo: MongoService,
     private readonly cache: CacheService,
     private readonly seasons: MplusSeasonResolver,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('MPLUS_LEADERBOARD_CACHE_TTL_SECONDS', { infer: true });
@@ -129,6 +131,13 @@ export class MplusLeaderboardService {
         filter['profile.specId'] = SPEC_IDS[`${query.class}-${query.spec}`];
       if (query.role) filter['profile.role'] = query.role;
     }
+
+    // Hidden players, in the query so `total` and ranks stay exact. Live and
+    // archived documents both carry `key`, the hidden list's own key.
+    const hiddenKeys = (await this.hidden.current()).characterKeys(
+      query.region === WORLD ? undefined : [query.region],
+    );
+    if (hiddenKeys.length > 0) filter.key = { $nin: hiddenKeys };
 
     const hint =
       MplusBoardIndexes[live ? 'live' : 'archive'][kind][

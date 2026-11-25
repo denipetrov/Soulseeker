@@ -37,6 +37,9 @@ export const Collections = {
   Raids: 'raids',
   Guilds: 'guilds',
   Bosses: 'bosses',
+
+  // Hidden players and guilds (Rankwarden's `POST /hidden`): the list itself.
+  HiddenEntries: 'hidden_entries',
 } as const;
 
 export type ReadCollection = (typeof Collections)[keyof typeof Collections];

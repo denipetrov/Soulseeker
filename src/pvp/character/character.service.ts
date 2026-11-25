@@ -12,6 +12,7 @@ import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import type { CharacterSyncInput } from '../../rankwarden/dto/character-sync.dto.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { SharedFlight, type Flight } from '../../redis/shared-flight.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
@@ -56,6 +57,7 @@ export class PvpCharacterService {
     private readonly sync: RankwardenSyncClient,
     private readonly mongo: MongoService,
     private readonly flights: SharedFlight,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVP_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -66,6 +68,13 @@ export class PvpCharacterService {
   }
 
   async character(query: CharacterQuery): Promise<PvpCharacterResponse> {
+    // A hidden player is not there: the same 404, before the cache, Blizzard or
+    // a sync are touched.
+    const hidden = await this.hidden.current();
+    if (hidden.isCharacterHidden(query.region, query.realmSlug, query.characterName)) {
+      throw new NotFoundException('No such character');
+    }
+
     const { response, sync } = await this.page(query);
 
     // Before reading back: the sync's write is what turns the stored rating

@@ -16,7 +16,8 @@
 #   NAMESPACE (soulseeker)  RANKWARDEN_NAMESPACE (rankwarden)  REDIS_RELEASE (redis)
 #
 # Generated here once and kept on every later run, read back from the cluster:
-#   the Redis password, the OAuth signing key and the cookie keys. Replacing the
+#   the Redis password, the OAuth signing key and the cookie keys, and the admin
+#   key for POST /admin/hidden (ADMIN_API_KEY, or set it yourself). Replacing the
 #   signing key would log out every visitor; to rotate it, see
 #   scripts/generate-oidc-keys.mjs.
 #
@@ -100,6 +101,10 @@ if [ -z "$OIDC_JWKS" ] || [ -z "$OIDC_COOKIE_KEYS" ]; then
   echo "generated OAuth keys"
 fi
 
+# --- Admin key (POST /admin/hidden): given, else kept, else generated ----------
+ADMIN_API_KEY="${ADMIN_API_KEY:-$(existing "$NAMESPACE" soulseeker-app ADMIN_API_KEY)}"
+ADMIN_API_KEY="${ADMIN_API_KEY:-$(random_password)}"
+
 apply_secret soulseeker-app Opaque \
   BLIZZARD_CLIENT_ID "$BLIZZARD_CLIENT_ID" \
   BLIZZARD_CLIENT_SECRET "$BLIZZARD_CLIENT_SECRET" \
@@ -108,7 +113,8 @@ apply_secret soulseeker-app Opaque \
   REDIS_URL "redis://:${REDIS_PASSWORD}@${REDIS_RELEASE}.${NAMESPACE}.svc.cluster.local:6379" \
   OIDC_JWKS "$OIDC_JWKS" \
   OIDC_COOKIE_KEYS "$OIDC_COOKIE_KEYS" \
-  TURNSTILE_SECRET "${TURNSTILE_SECRET:-}"
+  TURNSTILE_SECRET "${TURNSTILE_SECRET:-}" \
+  ADMIN_API_KEY "$ADMIN_API_KEY"
 
 # --- Registry -------------------------------------------------------------------
 if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then

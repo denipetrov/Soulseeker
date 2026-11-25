@@ -7,6 +7,8 @@ import { Collections, MplusRunIndexes } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { MAX_OFFSET } from '../../pvp/leaderboard/dto/leaderboard-query.dto.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
+import { anonymizeStoredRoster } from '../../hidden/anonymize.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { WORLD } from '../bosses/dto/bosses-query.dto.js';
 import { MplusSeasonsService } from '../mplus-seasons/mplus-seasons.service.js';
@@ -80,6 +82,7 @@ export class MplusRunsService {
     private readonly cache: CacheService,
     private readonly seasons: MplusSeasonResolver,
     private readonly seasonList: MplusSeasonsService,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('MPLUS_RUNS_CACHE_TTL_SECONDS', { infer: true });
@@ -111,7 +114,7 @@ export class MplusRunsService {
     );
     const board = `pve:mplus-runs:${id}`;
 
-    const [runs, total] = await Promise.all([
+    const [runs, total, hidden] = await Promise.all([
       this.cache.getOrLoad(
         `${board}:${query.page}:${query.pageSize}`,
         () => this.page(collection, filter, hint, query),
@@ -122,6 +125,7 @@ export class MplusRunsService {
         () => collection.countDocuments(filter, { hint }),
         this.cacheTtlSeconds,
       ),
+      this.hidden.current(),
     ]);
 
     return {
@@ -136,7 +140,9 @@ export class MplusRunsService {
         Math.ceil(total! / query.pageSize),
         Math.floor(MAX_OFFSET / query.pageSize) + 1,
       ),
-      runs: runs!,
+      // A hidden player keeps their slot in the run, anonymised: applied as the
+      // page is served, so a cached page follows the list at once.
+      runs: runs!.map((run) => ({ ...run, roster: anonymizeStoredRoster(run.roster, hidden) })),
     };
   }
 

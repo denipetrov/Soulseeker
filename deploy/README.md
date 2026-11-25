@@ -53,6 +53,7 @@ idempotent:
 | | `MONGODB_URI` | built from Rankwarden's `backend-password` (read-only user) |
 | | `REDIS_URL` | built from `redis-auth` |
 | | `OIDC_JWKS`, `OIDC_COOKIE_KEYS` | generated once, then kept |
+| | `ADMIN_API_KEY` | for `POST /admin/hidden`: from the environment, else kept, else generated once |
 | | `TURNSTILE_SECRET` | environment, optional |
 | `ghcr` | `.dockerconfigjson` | `GHCR_USERNAME`, `GHCR_TOKEN` |
 

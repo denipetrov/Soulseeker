@@ -87,6 +87,29 @@ export class CacheService {
     }
   }
 
+  /**
+   * Deletes every cached value whose key starts with one of `prefixes`, by
+   * `SCAN` (never `KEYS`, which blocks Redis). Answers how many went; 0 when
+   * Redis is away, as a cache failure never fails a request.
+   */
+  async deleteByPrefix(prefixes: readonly string[]): Promise<number> {
+    let deleted = 0;
+
+    try {
+      for (const prefix of prefixes) {
+        const match = `${this.redis.key('cache', prefix)}*`;
+        for await (const batch of this.redis.client.scanIterator({ MATCH: match, COUNT: 500 })) {
+          const keys = (Array.isArray(batch) ? batch : [batch]) as string[];
+          if (keys.length > 0) deleted += await this.redis.client.del(keys);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Cache purge failed for ${prefixes.join(', ')}: ${describeError(error)}`);
+    }
+
+    return deleted;
+  }
+
   async delete(key: string): Promise<void> {
     try {
       await this.redis.client.del(this.redis.key('cache', key));

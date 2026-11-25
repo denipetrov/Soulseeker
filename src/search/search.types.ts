@@ -34,6 +34,10 @@ export interface GuildSuggestion {
   region: string;
   realmSlug: string;
   realmName: string;
+  /** Lowercase: `alliance` or `horde`, as on characters; null when not stored. */
+  faction: string | null;
+  /** Raider.io's logo image URL, as Rankwarden stores it; null when the guild has none. */
+  logo: string | null;
 }
 
 export interface SuggestionsResponse {

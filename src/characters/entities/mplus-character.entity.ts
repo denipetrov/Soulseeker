@@ -76,6 +76,11 @@ export interface MplusCharacterDocument {
    * season's dungeon list is unknown. Indexed with `mythicScore` by Rankwarden.
    */
   isFullyCovered: boolean;
+  /**
+   * Hidden from readers (Rankwarden's `POST /hidden`). On `mplus_characters`
+   * only; the archive carries none, so readers match the hidden list's `key`.
+   */
+  hidden?: boolean;
   /** Best run per dungeon, highest score first. */
   dungeonRuns: DungeonRun[];
   updatedAt: Date;

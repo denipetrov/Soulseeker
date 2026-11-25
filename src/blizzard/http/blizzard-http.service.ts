@@ -30,8 +30,11 @@ export interface BlizzardGetOptions {
   searchParams?: Record<string, string | number>;
   /** Defaults to `profile`: Soulseeker reads characters, not ladders. */
   namespace?: NamespaceKind;
-  /** Defaults to `BLIZZARD_LOCALE`. */
-  locale?: string;
+  /**
+   * Defaults to `BLIZZARD_LOCALE`. `null` sends none: Game Data then answers
+   * every name in every language.
+   */
+  locale?: string | null;
 }
 
 /**
@@ -103,7 +106,9 @@ export class BlizzardHttpService {
         .get(url, {
           searchParams: {
             namespace: namespaceFor(options.namespace ?? 'profile', region),
-            locale: options.locale ?? this.locale,
+            // `locale: null` leaves it out: Game Data then names everything in
+            // every language at once, `{ en_US, de_DE, … }`.
+            ...(options.locale === null ? {} : { locale: options.locale ?? this.locale }),
             ...options.searchParams,
           },
         })
