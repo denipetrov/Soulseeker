@@ -161,6 +161,17 @@ Blizzard's id (`classId`, `specId`, `raceId`, `heroTalentId`), the same on PvP a
 | `GET /pve/tier-list?region=world` | Every Mythic+ spec scored 0–100 and ranked S to D |
 | `GET /pve/mplus-cutoffs?region=world&season=current` | Percentile cutoffs, day by day (Raider.io) |
 
+**Languages**
+
+| Route | Purpose |
+| --- | --- |
+| `GET /i18n/names?locale=de_DE` | Class, spec, race, hero talent, affix, dungeon, raid and boss names in one language, from Blizzard, for translating what Raider.io sends in English |
+
+Raider.io answers in English only. The front end translates PvE names by looking them up
+by the ids and slugs every answer carries. `/pvp/character` is already translated: it takes
+`locale`. Languages: `en_US`, `es_ES`, `pt_BR`, `fr_FR`, `de_DE`, `ru_RU`, `ko_KR`, `zh_CN`,
+and Blizzard's others.
+
 ## Testing
 
 | Command | What it runs | Needs |
@@ -205,6 +216,7 @@ src/
   search/                     /search/suggestions
   pvp/                        PvP endpoints; specs.ts lists every class and spec
   pve/                        PvE endpoints; shared/ holds the season resolver and guild join
+  localization/               /i18n/names: translated game names from Blizzard
   health/  docs/              health endpoints; Swagger
 test/                         integration suite and its harness (test/support/)
 deploy/                       Helm charts (soulseeker, redis), scripts

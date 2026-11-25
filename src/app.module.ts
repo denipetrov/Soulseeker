@@ -6,6 +6,7 @@ import { CommonModule } from './common/common.module.js';
 import { AppConfigModule } from './config/config.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { LocalizationModule } from './localization/localization.module.js';
 import { PveModule } from './pve/pve.module.js';
 import { PvpModule } from './pvp/pvp.module.js';
 import { RedisModule } from './redis/redis.module.js';
@@ -22,6 +23,7 @@ import { SearchModule } from './search/search.module.js';
     SearchModule,
     PvpModule,
     PveModule,
+    LocalizationModule,
     HealthModule,
   ],
 })

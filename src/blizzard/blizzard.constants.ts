@@ -32,6 +32,8 @@ export const LOCALES = [
   'it_IT',
   'ko_KR',
   'zh_TW',
+  // Simplified Chinese: served by the global hosts too, though China's own API is separate.
+  'zh_CN',
 ] as const;
 export type Locale = (typeof LOCALES)[number];
 

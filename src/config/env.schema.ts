@@ -270,6 +270,19 @@ export const envSchema = z.object({
     'profile/wow/character/{realmSlug}/{characterName}/achievements/statistics',
     ['realmSlug', 'characterName'],
   ),
+  // Game Data indexes for translated names (`/i18n/names`). Asked with no
+  // locale, each answers every name in every language at once.
+  BLIZZARD_PATH_PLAYABLE_CLASSES: pathTemplate('data/wow/playable-class/index', []),
+  BLIZZARD_PATH_PLAYABLE_SPECIALIZATIONS: pathTemplate(
+    'data/wow/playable-specialization/index',
+    [],
+  ),
+  BLIZZARD_PATH_PLAYABLE_RACES: pathTemplate('data/wow/playable-race/index', []),
+  BLIZZARD_PATH_TALENT_TREES: pathTemplate('data/wow/talent-tree/index', []),
+  BLIZZARD_PATH_KEYSTONE_AFFIXES: pathTemplate('data/wow/keystone-affix/index', []),
+  BLIZZARD_PATH_KEYSTONE_DUNGEONS: pathTemplate('data/wow/mythic-keystone/dungeon/index', []),
+  BLIZZARD_PATH_JOURNAL_INSTANCES: pathTemplate('data/wow/journal-instance/index', []),
+  BLIZZARD_PATH_JOURNAL_ENCOUNTERS: pathTemplate('data/wow/journal-encounter/index', []),
   /**
    * Short, because a person is waiting on the answer: a lookup that takes
    * longer than this is better served stale from Mongo than late.
@@ -425,6 +438,13 @@ export const envSchema = z.object({
    * read from Mongo again. Rankwarden re-reads both once a day.
    */
   PVE_CATALOGUE_TTL_SECONDS: positiveInt(86_400),
+  /**
+   * How long the translated names (`/i18n/names`) count as fresh. They change
+   * only with a patch, and a rebuild costs 8 Blizzard requests.
+   */
+  I18N_NAMES_TTL_SECONDS: positiveInt(604_800),
+  /** How long past freshness they are kept, to serve when Blizzard cannot be asked. */
+  I18N_NAMES_STALE_SECONDS: positiveInt(2_592_000),
   /** The shortest gap between two `forceRefresh` lookups of one character. */
   PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
 });

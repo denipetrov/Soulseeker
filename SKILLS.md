@@ -1348,6 +1348,55 @@ encounter, with its boards (`bossRankings.<board>.<difficulty>`, the first 50 gu
     uncached.
 - **404** for a raid the catalogue lacks, or a boss the raid does not have.
 
+### Translated names
+
+`GET /i18n/names?locale=` (`src/localization/`) gives the front end game names in one
+language. Raider.io has no localization: tested 2026-11-25. `locale`, `lang` and the
+like are refused with a 400 "Invalid request query input", and `Accept-Language` is
+ignored. So the front end translates PvE names by id or slug.
+
+- **Languages.** `LOCALES` (`blizzard.constants.ts`): Blizzard's 12 plus `zh_CN`, which was
+  added the same day. It works on the global hosts for Game Data and Profile alike, so
+  `/pvp/character?locale=zh_CN` works too. The user's languages are en_US, es_ES, pt_BR,
+  fr_FR, de_DE, ru_RU, ko_KR and zh_CN; the rest cost nothing extra. The query takes any
+  case and `-`.
+- **Source.** `GameDataApi` (`src/blizzard/game-data.api.ts`) reads 8 indexes from
+  `BLIZZARD_REGION` (US when that is `cn`), each with `locale: null`.
+  `BlizzardHttpService.get` leaves the locale out for `null`, and Blizzard then names
+  everything in every language at once (`{ en_US, de_DE, … }`).
+  - Paths are configuration: `BLIZZARD_PATH_PLAYABLE_CLASSES`, `…_SPECIALIZATIONS`,
+    `…_RACES`, `…_TALENT_TREES` (hero trees), `…_KEYSTONE_AFFIXES`, `…_KEYSTONE_DUNGEONS`
+    (the dynamic namespace), `…_JOURNAL_INSTANCES` and `…_JOURNAL_ENCOUNTERS`.
+  - Validated with `src/blizzard/schemas/game-data-index.schema.ts`.
+- **Builder** (`game-names.builder.ts`, pure, unit-tested): `buildGameNames` turns the
+  indexes plus the catalogue (`PveCatalogue.raids()` and `mplus_dungeons`) into one
+  document with every language. `namesIn` picks one language, falling back to English.
+  - Classes, specs, races, hero trees and affixes are by Blizzard id.
+  - Dungeons are by `challengeModeId`, which is Blizzard's keystone dungeon id, else by
+    English name.
+  - Raids and bosses are by English name through `nameKey` / `shortNameKey`
+    (`src/common/utils/name-key.ts`, shared with the per-boss kills).
+  - An `Awakened ` / `Fated ` re-release falls back to the original raid's name.
+  - What finds no match is left out (the front end keeps its English) and logged at warn,
+    with the list at debug.
+- **Real data (2026-11-25).**
+  - Everything matched except the `tier-mn-1` raid name and Halondrus (Blizzard has
+    "Halondrus the Reclaimer").
+  - One language is 11–16 KB.
+  - The first build takes ~1.2 s; later answers take ~6 ms.
+- **Cache.** `ss:cache:i18n:game-names`, one value for every language.
+  - Fresh for `I18N_NAMES_TTL_SECONDS` (a week), and kept `I18N_NAMES_STALE_SECONDS`
+    (30 days) more.
+  - Rebuilt in one `SharedFlight` across replicas.
+  - When Blizzard fails, the kept copy is served; with nothing kept, it is 502, or 503 for
+    a spent budget.
+  - To pick up a new patch's names now, delete the key.
+- **Not covered:** item and spell names (gear, talents). The front end uses Wowhead
+  tooltips for those.
+- **Tests:** `src/localization/game-names.builder.spec.ts` and `test/i18n-names.spec.ts`. The
+  integration test checks that the 8 requests carry no `locale`, the namespaces, every
+  language from one build, the stale copy and the 502.
+
 ## 8. Rankwarden sync
 
 `RankwardenSyncClient.pushPvpCharacter` / `pushMplusCharacter`:
