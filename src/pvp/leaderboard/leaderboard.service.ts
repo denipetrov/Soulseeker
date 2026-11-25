@@ -7,6 +7,7 @@ import type { Region } from '../../blizzard/blizzard.constants.js';
 import type { Env } from '../../config/env.schema.js';
 import { Collections, type ReadCollection } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import { regionsOf, WORLD, type PvpBoard } from '../world.js';
@@ -84,6 +85,7 @@ export class LeaderboardService {
     private readonly cache: CacheService,
     private readonly seasons: PvpSeasonsService,
     private readonly enricher: BoardEnricher,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('LEADERBOARD_CACHE_TTL_SECONDS', { infer: true });
@@ -163,7 +165,12 @@ export class LeaderboardService {
   ): Promise<LeaderboardResponse> {
     // On `world`, `$in` the regions: each index leads with season then region,
     // so the regions' ranges merge in rating order rather than being sorted.
-    const filter: Filter<RatingRow> = { seasonId: query.seasonId, region: inRegions(seasons) };
+    const filter: Filter<RatingRow> = {
+      seasonId: query.seasonId,
+      region: inRegions(seasons),
+      // Hidden players' rows, in the query, so `total` and paging stay exact.
+      ...(await this.hidden.pvpExclusion(seasons.map((season) => season.region))),
+    };
     if (query.role || query.subRole) {
       // Exact class and spec pairs, never a spec name alone: Frost is melee for
       // a death knight and ranged for a mage. Each branch walks `spec_board` in
@@ -202,7 +209,13 @@ export class LeaderboardService {
       : query.role || query.subRole
         ? { $in: specsMatching(query).map((pair) => `${bracket}-${pair.class}-${pair.spec}`) }
         : `${bracket}-${cls}-${spec}`;
-    const filter: Filter<ArchiveEntry> = { seasonId, region: inRegions(seasons), bracket: ladder };
+    const filter: Filter<ArchiveEntry> = {
+      seasonId,
+      region: inRegions(seasons),
+      bracket: ladder,
+      // A character's Blizzard id outlives the season, so the archive is matched by it too.
+      ...(await this.hidden.pvpExclusion(seasons.map((season) => season.region))),
+    };
 
     // `archive_board` (seasonId, region, bracket, rating desc) serves both.
     const archive = this.mongo.collection<ArchiveEntry>(Collections.ArchiveEntries);

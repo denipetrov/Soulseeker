@@ -10,6 +10,7 @@ import {
 } from '../leaderboard/board-enricher.service.js';
 import { PvpSeasonsService } from '../seasons/pvp-seasons.service.js';
 import type { Cutoff, PvpSeason, SpecFamily } from '../seasons/pvp-season.types.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { specsMatching } from '../roles.js';
 import { classIdOf, specIdOf } from '../specs.js';
 import { regionsOf, WORLD, type PvpBoard } from '../world.js';
@@ -79,6 +80,7 @@ export class CutoffsService {
     private readonly mongo: MongoService,
     private readonly seasons: PvpSeasonsService,
     private readonly enricher: BoardEnricher,
+    private readonly hidden: HiddenList,
   ) {}
 
   async cutoffs(query: CutoffsQuery): Promise<CutoffsResponse | CutoffCharactersResponse> {
@@ -241,6 +243,7 @@ export class CutoffsService {
           class: cls,
           spec,
           rating: { $gte: rating },
+          ...(await this.hidden.pvpExclusion([season.region])),
         },
         { projection: ROW_PROJECTION },
       )
@@ -263,7 +266,15 @@ export class CutoffsService {
     const groups = await this.mongo
       .collection<RatingRow>(RATING_COLLECTIONS[bracket])
       .aggregate<{ _id: { class: string | null; spec: string | null }; count: number }>([
-        { $match: { seasonId: season.seasonId, region: season.region, rating: { $gte: rating } } },
+        {
+          $match: {
+            seasonId: season.seasonId,
+            region: season.region,
+            rating: { $gte: rating },
+            // Counted as listed: hidden players in neither.
+            ...(await this.hidden.pvpExclusion([season.region])),
+          },
+        },
         {
           $group: {
             _id: { class: { $ifNull: ['$class', null] }, spec: { $ifNull: ['$spec', null] } },
@@ -295,6 +306,7 @@ export class CutoffsService {
     const ladders = wanted ? all.filter(([key]) => wanted.has(key)) : all;
 
     const ratings = this.mongo.collection<RatingRow>(RATING_COLLECTIONS[family]);
+    const hidden = await this.hidden.pvpExclusion([season.region]);
 
     const counted = await Promise.all(
       ladders.map(async ([key, cutoff]) => {
@@ -312,6 +324,7 @@ export class CutoffsService {
                 class: cls,
                 spec,
                 rating: { $gte: rating },
+                ...hidden,
               });
 
         return { class: cls ?? null, spec: spec || null, count, cutoff };

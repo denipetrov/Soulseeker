@@ -14,4 +14,6 @@ export interface GuildDocument {
   region: string;
   realm: { slug: string; name: string };
   updatedAt: Date;
+  /** Hidden from readers through Rankwarden's `POST /hidden`; absent before Rankwarden wrote it. */
+  hidden?: boolean;
 }

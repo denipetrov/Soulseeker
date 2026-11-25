@@ -8,6 +8,7 @@ import type { MplusCharacterDocument } from '../characters/entities/mplus-charac
 import type { Env } from '../config/env.schema.js';
 import { Collections, Indexes } from '../database/collections.js';
 import { MongoService } from '../database/mongo.service.js';
+import { HiddenList } from '../hidden/hidden-list.service.js';
 import { CacheService } from '../redis/cache.service.js';
 import { CurrentSeasons } from '../seasons/current-seasons.service.js';
 import { SearchType, type SuggestionsQuery } from './dto/suggestions-query.dto.js';
@@ -47,6 +48,7 @@ export class SearchService {
     private readonly mongo: MongoService,
     private readonly cache: CacheService,
     private readonly seasons: CurrentSeasons,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('SEARCH_CACHE_TTL_SECONDS', { infer: true });
@@ -81,6 +83,8 @@ export class SearchService {
   private async pvpCharacters(prefix: { $regex: string }): Promise<CharacterSuggestion[]> {
     const seasons = await this.seasons.pvpSeasons();
     if (seasons.length === 0) return [];
+    // Hidden players are left out in the query, so the limit still fills.
+    const hidden = await this.hidden.pvpExclusion(seasons.map(({ region }) => region));
 
     const docs = await this.mongo
       .collection<CharacterDocument>(Collections.Characters)
@@ -88,6 +92,7 @@ export class SearchService {
         {
           searchName: prefix,
           $or: seasons.map(({ region, seasonId }) => ({ region, seasonId })),
+          ...hidden,
         },
         { projection: PVP_CHARACTER_PROJECTION },
       )
@@ -101,6 +106,8 @@ export class SearchService {
   private async mplusCharacters(prefix: { $regex: string }): Promise<CharacterSuggestion[]> {
     const seasons = await this.seasons.mplusSeasons();
     if (seasons.length === 0) return [];
+    // `key` is the hidden list's own key for a player.
+    const hiddenKeys = (await this.hidden.current()).characterKeys();
 
     const docs = await this.mongo
       .collection<MplusCharacterDocument>(Collections.MplusCharacters)
@@ -108,6 +115,7 @@ export class SearchService {
         {
           searchName: prefix,
           $or: seasons.map(({ region, season }) => ({ region, season })),
+          ...(hiddenKeys.length > 0 ? { key: { $nin: hiddenKeys } } : {}),
         },
         { projection: MPLUS_CHARACTER_PROJECTION },
       )
@@ -119,9 +127,13 @@ export class SearchService {
   }
 
   private async guilds(prefix: { $regex: string }): Promise<GuildSuggestion[]> {
+    const hiddenIds = [...(await this.hidden.current()).guilds];
     const docs = await this.mongo
       .collection<GuildDocument>(Collections.Guilds)
-      .find({ searchName: prefix }, { projection: GUILD_PROJECTION })
+      .find(
+        { searchName: prefix, ...(hiddenIds.length > 0 ? { id: { $nin: hiddenIds } } : {}) },
+        { projection: GUILD_PROJECTION },
+      )
       .hint(Indexes.GuildSearch)
       .limit(SUGGESTION_LIMIT)
       .toArray();

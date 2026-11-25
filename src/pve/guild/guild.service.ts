@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { searchNameOf } from '@denipetrov/spirit-link/search';
 import { RunLogger } from '@denipetrov/spirit-link/logging';
 import type { RaidDifficulty } from '@denipetrov/spirit-link/constants';
 
@@ -14,6 +15,11 @@ import { describeError } from '../../common/utils/errors.js';
 import { SingleFlight } from '../../common/utils/single-flight.js';
 import type { Env } from '../../config/env.schema.js';
 import { RaiderIoGuildApi } from '../../raiderio/guild.api.js';
+import type { GuildDocument } from '../../characters/entities/guild.entity.js';
+import { Collections, Indexes } from '../../database/collections.js';
+import { MongoService } from '../../database/mongo.service.js';
+import { anonymizeRaiderIoRoster, isHiddenMember } from '../../hidden/anonymize.js';
+import { HiddenList, type HiddenSet } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
 import { SharedFlight } from '../../redis/shared-flight.service.js';
@@ -78,6 +84,8 @@ export class GuildService {
     private readonly cache: CacheService,
     private readonly cooldown: RefreshCooldown,
     private readonly sharedFlights: SharedFlight,
+    private readonly hidden: HiddenList,
+    private readonly mongo: MongoService,
     config: ConfigService<Env, true>,
   ) {
     this.ttlMs = config.get('GUILD_CACHE_TTL_SECONDS', { infer: true }) * 1000;
@@ -89,6 +97,62 @@ export class GuildService {
   async guild(query: GuildQuery): Promise<GuildResponse> {
     await this.assertKnownSlugs(query);
 
+    const hidden = await this.hidden.current();
+    // A hidden guild is not there: the same 404, before the cache or Raider.io.
+    if (await this.isHiddenGuild(query, hidden)) throw new NotFoundException('No such guild');
+
+    return this.withoutHiddenPlayers(await this.answer(query), hidden, query.region);
+  }
+
+  /**
+   * Hidden players out of what is shown: off the member lists, and anonymised
+   * in a boss kill's roster, where the group is shown whole. Applied as the
+   * answer is served, so cached parts follow the list at once.
+   */
+  private withoutHiddenPlayers(
+    response: GuildResponse,
+    hidden: HiddenSet,
+    region: string,
+  ): GuildResponse {
+    if (hidden.characters.size === 0) return response;
+    if ('members' in response) {
+      return {
+        ...response,
+        members: response.members.filter((member) => !isHiddenMember(member, hidden, region)),
+      };
+    }
+    if ('roster' in response) {
+      return { ...response, roster: anonymizeRaiderIoRoster(response.roster, hidden, region) };
+    }
+
+    return response;
+  }
+
+  /**
+   * Whether Rankwarden's `guilds` holds this guild under a hidden id. Guilds
+   * are hidden by Raider.io id, which a request by name only meets here: one
+   * Rankwarden has never stored cannot be told hidden, and Rankwarden only
+   * hides guilds it has stored ids for.
+   */
+  private async isHiddenGuild(query: GuildQuery, hidden: HiddenSet): Promise<boolean> {
+    if (hidden.guilds.size === 0) return false;
+
+    const docs = await this.mongo
+      .collection<GuildDocument>(Collections.Guilds)
+      .find(
+        {
+          searchName: searchNameOf(query.guildName),
+          region: query.region,
+          'realm.slug': query.realmSlug,
+        },
+        { projection: { _id: 0, id: 1 }, hint: Indexes.GuildSearch },
+      )
+      .toArray();
+
+    return docs.some((doc) => hidden.isGuildHidden(doc.id));
+  }
+
+  private async answer(query: GuildQuery): Promise<GuildResponse> {
     const id = `${query.region}:${query.realmSlug}:${query.guildName}`;
     const label = `${query.region}/${query.realmSlug}/${query.guildName}`;
 

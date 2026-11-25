@@ -9,6 +9,8 @@ import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { RAIDERIO_REGIONS } from '../../raiderio/raiderio.constants.js';
 import { RaiderIoMythicPlusApi } from '../../raiderio/mythic-plus.api.js';
+import { anonymizeRaiderIoRoster } from '../../hidden/anonymize.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { PveCatalogue } from '../../seasons/pve-catalogue.service.js';
 import { WORLD } from '../bosses/dto/bosses-query.dto.js';
@@ -41,6 +43,7 @@ export class MplusRunService {
     private readonly cache: CacheService,
     private readonly catalogue: PveCatalogue,
     private readonly seasons: MplusSeasonResolver,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('MPLUS_RUN_CACHE_TTL_SECONDS', { infer: true });
@@ -64,7 +67,9 @@ export class MplusRunService {
       });
     }
 
-    return run;
+    // A hidden player keeps their slot, anonymised; applied as the run is
+    // served, so the cached copy follows the list at once.
+    return { ...run, roster: anonymizeRaiderIoRoster(run.roster, await this.hidden.current()) };
   }
 
   /** The run's season as Rankwarden stores the run, or the current season. */

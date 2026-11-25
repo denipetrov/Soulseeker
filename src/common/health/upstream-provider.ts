@@ -27,6 +27,7 @@ export function healthSecrets(config: ConfigService<Env, true>): string[] {
     config.get('BLIZZARD_CLIENT_ID', { infer: true }),
     config.get('RAIDER_IO_API_KEY', { infer: true }),
     config.get('TURNSTILE_SECRET', { infer: true }),
+    config.get('ADMIN_API_KEY', { infer: true }),
     ...config.get('OIDC_COOKIE_KEYS', { infer: true }),
   ];
 }

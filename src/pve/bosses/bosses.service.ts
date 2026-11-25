@@ -10,6 +10,7 @@ import {
 import type { Env } from '../../config/env.schema.js';
 import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import {
   PveCatalogue,
@@ -47,6 +48,7 @@ export class BossesService {
     private readonly cache: CacheService,
     private readonly catalogue: PveCatalogue,
     private readonly guildRefs: GuildRefs,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     this.cacheTtlSeconds = config.get('BOSSES_CACHE_TTL_SECONDS', { infer: true });
@@ -90,12 +92,17 @@ export class BossesService {
       this.cacheTtlSeconds,
     );
 
+    // Hidden guilds off every board as it is served, before `top` cuts it.
+    const hidden = await this.hidden.current();
+
     return {
       region: query.region,
       difficulty: cached!.difficulty,
       bosses: cached!.bosses.map((boss) => ({
         ...boss,
-        bossRankings: boss.bossRankings.slice(0, query.top),
+        bossRankings: boss.bossRankings
+          .filter((ranking) => !hidden.isGuildHidden(ranking.guild.id))
+          .slice(0, query.top),
       })),
     };
   }

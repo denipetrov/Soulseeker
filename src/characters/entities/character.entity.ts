@@ -73,6 +73,11 @@ export interface CharacterDocument {
   /** Absent until Rankwarden has enriched the character. */
   profile?: CharacterProfile;
   profileStatus?: 'ok' | 'missing' | 'unparseable';
+  /**
+   * Hidden from readers (Rankwarden's `POST /hidden`). The `*_ratings` rows
+   * and the archive carry none: readers check the character, or the list.
+   */
+  hidden?: boolean;
   profileFetchedAt?: Date;
   specsFetchedAt?: Date;
 }

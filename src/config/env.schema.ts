@@ -445,6 +445,21 @@ export const envSchema = z.object({
   I18N_NAMES_TTL_SECONDS: positiveInt(604_800),
   /** How long past freshness they are kept, to serve when Blizzard cannot be asked. */
   I18N_NAMES_STALE_SECONDS: positiveInt(2_592_000),
+  /**
+   * How long the hidden list (Rankwarden's `hidden_entries`) is cached. A change
+   * through `POST /admin/hidden` drops it at once; one made straight on
+   * Rankwarden shows within this.
+   */
+  HIDDEN_LIST_TTL_SECONDS: positiveInt(60),
+  /**
+   * The key `POST /admin/hidden` needs in `X-Admin-Key`, at least 32
+   * characters. A secret. Empty turns the admin endpoints off (404).
+   */
+  ADMIN_API_KEY: z
+    .string()
+    .trim()
+    .default('')
+    .refine((key) => key === '' || key.length >= 32, 'must be at least 32 characters, or empty'),
   /** The shortest gap between two `forceRefresh` lookups of one character. */
   PVP_CHARACTER_REFRESH_COOLDOWN_SECONDS: positiveInt(300),
 });

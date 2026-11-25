@@ -9,6 +9,7 @@ import { UpstreamProvider } from '../common/health/upstream-provider.js';
 import { describeError } from '../common/utils/errors.js';
 import type { Env } from '../config/env.schema.js';
 import { characterSyncSchema, type CharacterSyncInput } from './dto/character-sync.dto.js';
+import { setHiddenSchema, type SetHiddenInput } from './dto/set-hidden.dto.js';
 import {
   mplusCharacterSyncSchema,
   type MplusCharacterSyncInput,
@@ -34,6 +35,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const Endpoint = {
   Pvp: 'characters/sync',
   Mplus: 'mplus/characters/sync',
+  Hidden: 'hidden',
 } as const;
 type Endpoint = (typeof Endpoint)[keyof typeof Endpoint];
 
@@ -93,6 +95,15 @@ export class RankwardenSyncClient {
     options: PushOptions = {},
   ): Promise<SyncOutcome> {
     return this.push(Endpoint.Mplus, mplusCharacterSyncSchema, input, options);
+  }
+
+  /**
+   * Hides or shows a player or a guild in Rankwarden (`POST /hidden`). One
+   * attempt: the endpoint is idempotent and never busy. `written` carries
+   * Rankwarden's answer, with `updated`, the stored documents it reached.
+   */
+  setHidden(input: SetHiddenInput): Promise<SyncOutcome> {
+    return this.push(Endpoint.Hidden, setHiddenSchema, input, { retries: 0 });
   }
 
   private async push<T>(

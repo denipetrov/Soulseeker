@@ -23,6 +23,7 @@ import { MongoService } from '../../database/mongo.service.js';
 import { RaiderIoCharacterApi } from '../../raiderio/character.api.js';
 import type { RaiderIoCharacterPayload } from '../../raiderio/schemas/character-profile.schema.js';
 import { RankwardenSyncClient } from '../../rankwarden/rankwarden-sync.client.js';
+import { HiddenList } from '../../hidden/hidden-list.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import { RefreshCooldown } from '../../redis/refresh-cooldown.service.js';
 import { SharedFlight, type Flight } from '../../redis/shared-flight.service.js';
@@ -88,6 +89,7 @@ export class PveCharacterService {
     private readonly mongo: MongoService,
     private readonly currentSeasons: CurrentSeasons,
     private readonly flights: SharedFlight,
+    private readonly hidden: HiddenList,
     config: ConfigService<Env, true>,
   ) {
     const ttlSeconds = config.get('PVE_CHARACTER_CACHE_TTL_SECONDS', { infer: true });
@@ -97,6 +99,13 @@ export class PveCharacterService {
   }
 
   async character(query: PveCharacterQuery): Promise<PveCharacterResponse> {
+    // A hidden player is not there: the same 404, before the cache, Raider.io,
+    // Blizzard or a sync are touched.
+    const hidden = await this.hidden.current();
+    if (hidden.isCharacterHidden(query.region, query.realmSlug, query.characterName)) {
+      throw new NotFoundException('No such character');
+    }
+
     await this.assertKnownSlugs(query);
 
     const id = `${query.region}:${query.realmSlug}:${query.characterName}`;
