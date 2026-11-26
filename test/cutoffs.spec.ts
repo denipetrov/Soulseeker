@@ -113,8 +113,13 @@ beforeAll(async () => {
       spec: { id: 63, name: 'Fire' },
       heroTalentTree: { id: 44, name: 'Sunfury' },
       talentLoadouts: [
-        { spec: { id: 63, name: 'Fire' }, heroTalentTree: { id: 44, name: 'Sunfury' } },
+        {
+          spec: { id: 63, name: 'Fire' },
+          talentLoadoutCode: 'CODE',
+          heroTalentTree: { id: 44, name: 'Sunfury' },
+        },
       ],
+      realmName: 'Kazzak',
       gender: 'FEMALE',
       level: 90,
       race: { id: 10, name: 'Blood Elf' },
@@ -278,6 +283,16 @@ describe('GET /pvp/cutoffs with class and spec', () => {
       profileStatus: 'ok',
       race: 'Blood Elf',
       raceId: 10,
+      realmName: 'Kazzak',
+      talentLoadouts: [
+        {
+          spec: 'fire',
+          specId: 63,
+          heroTalents: 'Sunfury',
+          heroTalentId: 44,
+          talentLoadoutCode: 'CODE',
+        },
+      ],
     });
   });
 

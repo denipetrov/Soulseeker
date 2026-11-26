@@ -117,6 +117,14 @@ export function currentEntry(
     profileStatus: character?.profileStatus ?? null,
     race: profile?.race?.name ?? null,
     raceId: profile?.race?.id ?? null,
+    realmName: profile?.realmName ?? null,
+    talentLoadouts: (profile?.talentLoadouts ?? []).map((loadout) => ({
+      spec: slugOf(loadout.spec?.name),
+      specId: loadout.spec?.id ?? null,
+      heroTalents: loadout.heroTalentTree?.name ?? null,
+      heroTalentId: loadout.heroTalentTree?.id ?? null,
+      talentLoadoutCode: loadout.talentLoadoutCode ?? null,
+    })),
   };
 }
 

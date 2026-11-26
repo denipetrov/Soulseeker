@@ -453,6 +453,11 @@ How it reads each kind of season:
     the profile: class, spec, gender, level, race, hero talents and `profileStatus`.
   - Hero talents come from the spec loadout on spec ladders, and from the active tree
     on 2v2, 3v3 and RBG.
+  - `realmName` (`profile.realmName`) and `talentLoadouts`: every stored loadout as
+    `{ spec (slug), specId, heroTalents, heroTalentId, talentLoadoutCode }`, `[]` before
+    enrichment. They cost ~3 loadouts and ~300 characters of codes per character, ~15 KB a
+    50-row page before compression (season 42, 2026-11-26). `BoardEnricher` projects the
+    loadouts whole. The cutoff character lists get them too, through the same enricher.
 - **Archived season**:
   - Rows come from `archive_entries`, which carry everything inline and have no
     profile fields; those keys are absent, not null.

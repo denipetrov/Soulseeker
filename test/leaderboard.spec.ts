@@ -28,7 +28,14 @@ const profile = (cls: string, spec: string, hero: string) => ({
   class: { id: 1, name: cls },
   spec: { id: 2, name: spec },
   heroTalentTree: { id: 3, name: hero },
-  talentLoadouts: [{ spec: { id: 2, name: spec }, heroTalentTree: { id: 3, name: hero } }],
+  talentLoadouts: [
+    {
+      spec: { id: 2, name: spec },
+      talentLoadoutCode: 'CODE',
+      heroTalentTree: { id: 3, name: hero },
+    },
+  ],
+  realmName: 'Kazzak',
   gender: 'FEMALE',
   level: 90,
   race: { id: 4, name: 'Gnome' },
@@ -244,6 +251,16 @@ describe('GET /pvp/leaderboard — current season', () => {
       profileStatus: 'ok',
       race: 'Gnome',
       raceId: 4,
+      realmName: 'Kazzak',
+      talentLoadouts: [
+        {
+          spec: 'fire',
+          specId: 2,
+          heroTalents: 'Sunfury',
+          heroTalentId: 3,
+          talentLoadoutCode: 'CODE',
+        },
+      ],
     });
   });
 
