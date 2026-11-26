@@ -57,6 +57,22 @@ export interface LeaderboardEntry {
   race?: string | null;
   /** Blizzard's race id. */
   raceId?: number | null;
+  /** The realm's display name (`Tarren Mill`); `realmSlug` is the slug. */
+  realmName?: string | null;
+  /** The active loadout of each spec the character has one for; empty before enrichment. */
+  talentLoadouts?: LeaderboardTalentLoadout[];
+}
+
+/** One spec's active loadout, in the entry's own field names. */
+export interface LeaderboardTalentLoadout {
+  /** Slug, as `spec`: `shadow`. */
+  spec: string | null;
+  specId: number | null;
+  /** The hero talent tree's name and Blizzard id. */
+  heroTalents: string | null;
+  heroTalentId: number | null;
+  /** The in-game import string. */
+  talentLoadoutCode: string | null;
 }
 
 export interface LeaderboardResponse {

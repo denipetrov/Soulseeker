@@ -23,13 +23,17 @@ export type BoardRow = Pick<
   'region' | 'characterId' | 'bracket' | 'rating' | 'class' | 'spec'
 >;
 
-/** What enrichment needs of a profile, and nothing else: talent codes are kilobytes. */
+/**
+ * What enrichment needs of a profile, and nothing else. The loadouts come
+ * whole, codes included: ~3 a character and ~300 characters of codes, so ~15 KB
+ * on a 50-row page before compression (measured on season 42, 2026-11-26).
+ */
 const PROFILE_PROJECTION = {
   'profile.class.name': 1,
   'profile.spec.name': 1,
   'profile.heroTalentTree': 1,
-  'profile.talentLoadouts.spec.name': 1,
-  'profile.talentLoadouts.heroTalentTree': 1,
+  'profile.talentLoadouts': 1,
+  'profile.realmName': 1,
   'profile.gender': 1,
   'profile.level': 1,
   'profile.race': 1,
