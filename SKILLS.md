@@ -458,6 +458,10 @@ How it reads each kind of season:
     enrichment. They cost ~3 loadouts and ~300 characters of codes per character, ~15 KB a
     50-row page before compression (season 42, 2026-11-26). `BoardEnricher` projects the
     loadouts whole. The cutoff character lists get them too, through the same enricher.
+  - Each loadout also carries `pvpTalents`, `[{ slot, id, name, spellId }]` in slot order,
+    stored by Rankwarden since 2b07fb8 (2026-11-27). It is `[]` on documents whose specs
+    Rankwarden last fetched before then. The `id` differs by spec for one talent (Smoke Bomb
+    is 1209 for Subtlety and 3480 for Assassination), so group by `spellId`.
 - **Archived season**:
   - Rows come from `archive_entries`, which carry everything inline and have no
     profile fields; those keys are absent, not null.
@@ -1479,6 +1483,12 @@ ignored. So the front end translates PvE names by id or slug.
   endpoint merges runs and never lowers a score. Rankwarden never creates characters.
 - PvP brackets carry no `rank`: only the leaderboard has one, and Rankwarden keeps what its
   sweep stored.
+- **Every `profile.talentLoadouts` entry carries `pvpTalents`.** Rankwarden defaults a
+  missing list to `[]` and stores it, so a push without it would wipe the spec's stored PvP
+  talents. `pvpTalentsOf` (`src/pvp/character/character.mapper.ts`) builds it from the
+  cached `pvpTalentSlots` exactly as Rankwarden does: slot order, empty slots left out,
+  `selected.talent` and `selected.spell_tooltip.spell.id`. The schema mirror is in
+  `src/rankwarden/dto/character-sync.dto.ts`.
 
 ## 9. API docs (Swagger)
 

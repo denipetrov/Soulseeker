@@ -291,6 +291,8 @@ describe('GET /pvp/cutoffs with class and spec', () => {
           heroTalents: 'Sunfury',
           heroTalentId: 44,
           talentLoadoutCode: 'CODE',
+          // Specs fetched before Rankwarden stored them: none yet.
+          pvpTalents: [],
         },
       ],
     });

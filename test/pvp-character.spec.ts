@@ -69,6 +69,18 @@ const PAYLOADS: Record<string, unknown> = {
       {
         specialization: ref(65, 'Holy'),
         loadouts: [{ is_active: true, talent_loadout_code: 'CODE' }],
+        // Out of slot order, one empty: sent sorted, the empty one left out.
+        pvp_talent_slots: [
+          {
+            slot_number: 3,
+            selected: {
+              talent: ref(5674, 'Spellwarding'),
+              spell_tooltip: { spell: ref(199452, 'Spellwarding'), description: 'Text' },
+            },
+          },
+          { slot_number: 2 },
+          { slot_number: 1, selected: { talent: ref(5553, 'Ultimate Sacrifice') } },
+        ],
       },
     ],
   },
@@ -373,6 +385,18 @@ describe('GET /pvp/character', () => {
       profile: { class: ref(2, 'Paladin'), gender: 'FEMALE', realmName: 'Demon Soul' },
     });
     expect((push?.body as Json).brackets['3v3']).not.toHaveProperty('rank');
+    // Always sent: Rankwarden would store a missing list as empty.
+    expect((push?.body as Json).profile.talentLoadouts).toEqual([
+      {
+        spec: ref(65, 'Holy'),
+        talentLoadoutCode: 'CODE',
+        heroTalentTree: null,
+        pvpTalents: [
+          { slot: 1, id: 5553, name: 'Ultimate Sacrifice', spellId: null },
+          { slot: 3, id: 5674, name: 'Spellwarding', spellId: 199452 },
+        ],
+      },
+    ]);
   });
 
   it('fetches only the translated part for a second language', async () => {

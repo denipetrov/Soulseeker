@@ -102,6 +102,33 @@ function specializationsOf(payload: CharacterSpecializationsPayload): PvpCharact
 }
 
 /**
+ * A spec's chosen PvP talents for Rankwarden, as it derives them itself: in
+ * slot order, empty slots left out, the talent's id and name and the spell it
+ * grants (`selected.spell_tooltip.spell`). The tooltip text, static game data,
+ * is not sent.
+ */
+export function pvpTalentsOf(
+  slots: PvpCharacterSpecializations['specializations'][number]['pvpTalentSlots'],
+): { slot: number; id: number; name: string; spellId: number | null }[] {
+  return slots
+    .flatMap(({ slotNumber, selected }) => {
+      const talent = selected?.talent as { id?: unknown; name?: unknown } | undefined;
+      if (typeof talent?.id !== 'number' || typeof talent.name !== 'string') return [];
+      const spell = (selected?.spell_tooltip as { spell?: { id?: unknown } } | undefined)?.spell;
+
+      return [
+        {
+          slot: slotNumber,
+          id: talent.id,
+          name: talent.name,
+          spellId: typeof spell?.id === 'number' ? spell.id : null,
+        },
+      ];
+    })
+    .sort((a, b) => a.slot - b.slot);
+}
+
+/**
  * Achievement statistic ids of the highest personal ratings. Ids, not names:
  * they are the same in every language.
  */
@@ -308,16 +335,18 @@ export function syncPayloadOf(
       lastLoginAt: profile.lastLoginAt === null ? null : new Date(profile.lastLoginAt),
       ...(specializations && {
         heroTalentTree: specializations.activeHeroTalentTree,
-        talentLoadouts: specializations.specializations.flatMap(({ specialization, loadout }) =>
-          loadout
-            ? [
-                {
-                  spec: specialization,
-                  talentLoadoutCode: loadout.talentLoadoutCode,
-                  heroTalentTree: loadout.heroTalentTree,
-                },
-              ]
-            : [],
+        talentLoadouts: specializations.specializations.flatMap(
+          ({ specialization, loadout, pvpTalentSlots }) =>
+            loadout
+              ? [
+                  {
+                    spec: specialization,
+                    talentLoadoutCode: loadout.talentLoadoutCode,
+                    heroTalentTree: loadout.heroTalentTree,
+                    pvpTalents: pvpTalentsOf(pvpTalentSlots),
+                  },
+                ]
+              : [],
         ),
       }),
     },

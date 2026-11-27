@@ -73,6 +73,12 @@ export interface LeaderboardTalentLoadout {
   heroTalentId: number | null;
   /** The in-game import string. */
   talentLoadoutCode: string | null;
+  /**
+   * The spec's chosen PvP talents, in slot order; empty when none are stored
+   * yet. `id` is the PvP talent, which differs by spec for one talent (Smoke
+   * Bomb is 1209 for Subtlety, 3480 for Assassination): group by `spellId`.
+   */
+  pvpTalents: { slot: number; id: number; name: string; spellId: number | null }[];
 }
 
 export interface LeaderboardResponse {
