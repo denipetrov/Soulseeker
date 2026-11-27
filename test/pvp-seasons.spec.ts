@@ -3,7 +3,13 @@ import type { Db } from 'mongodb';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { PvpSeasonsService } from '../src/pvp/seasons/pvp-seasons.service.js';
-import { bootTestApp, resetRedis, type TestApp } from './support/app.js';
+import {
+  anonymousTokens,
+  bootTestApp,
+  resetRedis,
+  type Json,
+  type TestApp,
+} from './support/app.js';
 import { openTestDatabase } from './support/database.js';
 import { testRedisUrl } from './support/redis.js';
 
@@ -139,5 +145,74 @@ describe('PvpSeasonsService', () => {
 
   it('answers null for 2v2, which awards no title', async () => {
     expect(await seasons.cutoff('eu', 42, '2v2')).toBeNull();
+  });
+});
+
+describe('GET /pvp/seasons', () => {
+  async function list(): Promise<{ status: number; body: Json }> {
+    const { access_token: token } = await anonymousTokens(app);
+    const response = await fetch(`${app.url}/pvp/seasons`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    return { status: response.status, body: (await response.json()) as Json };
+  }
+
+  it('lists every season newest first, each region with its dates and core cutoffs', async () => {
+    const { status, body } = await list();
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      seasons: [
+        {
+          seasonId: 42,
+          name: 'Season 42',
+          current: true,
+          regions: {
+            eu: {
+              startsAt: '2026-08-18T15:00:00.000Z',
+              endsAt: null,
+              current: true,
+              final: false,
+              rewardsFetchedAt: null,
+              cutoffs: {
+                '3v3': { rating: 2858, title: 'Gladiator', achievementId: 1, factions: null },
+                rbg: null,
+              },
+            },
+          },
+        },
+        {
+          seasonId: 41,
+          name: 'Season 41',
+          current: false,
+          regions: {
+            eu: {
+              startsAt: '2026-03-18T04:00:00.000Z',
+              endsAt: '2026-08-11T20:00:00.000Z',
+              current: false,
+              final: true,
+              rewardsFetchedAt: null,
+              cutoffs: {
+                '3v3': { rating: 3154, title: 'Gladiator', achievementId: 1, factions: null },
+                rbg: null,
+              },
+            },
+          },
+        },
+      ],
+    });
+    expect(await ttlOf('pvp:season-list')).toBeGreaterThan(3590);
+  });
+
+  it('answers from the cache once filled', async () => {
+    await list();
+    await db.collection('archive_seasons').deleteMany({});
+
+    expect((await list()).body.seasons).toHaveLength(2);
+  });
+
+  it('needs a token', async () => {
+    expect((await fetch(`${app.url}/pvp/seasons`)).status).toBe(401);
   });
 });

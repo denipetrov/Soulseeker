@@ -78,3 +78,38 @@ export interface PvpSeasonSummary {
 
 /** Every region's seasons, newest first. The cache's index of what exists. */
 export type PvpSeasonIndex = Partial<Record<Region, PvpSeasonSummary[]>>;
+
+/** One region's run of a season in `GET /pvp/seasons`. */
+export interface PvpSeasonRegion {
+  startsAt: string | null;
+  /** Null while the season runs in the region, and for the oldest seasons Blizzard has no dates for. */
+  endsAt: string | null;
+  /** The region's live season. */
+  current: boolean;
+  /** Cutoffs are final: the season is archived in the region. */
+  final: boolean;
+  /** When Rankwarden last read the cutoffs; null when it has none. */
+  rewardsFetchedAt: string | null;
+  /**
+   * The title cutoffs of the ladders with one cutoff for everyone. 2v2 awards
+   * no title; the per-spec Shuffle and Blitz cutoffs are on `GET /pvp/cutoffs`.
+   */
+  cutoffs: { '3v3': Cutoff | null; rbg: Cutoff | null };
+}
+
+/** A season in `GET /pvp/seasons`: one id, shared by every region. */
+export interface PvpSeasonListEntry {
+  /** Blizzard's PvP season id: 42 is Midnight Season 2. */
+  seasonId: number;
+  /** Blizzard's name, from whichever region has one; null for seasons Blizzard left unnamed. */
+  name: string | null;
+  /** Live in at least one region. */
+  current: boolean;
+  /** Per region; a region Rankwarden has no record of the season for is absent. */
+  regions: Partial<Record<Region, PvpSeasonRegion>>;
+}
+
+export interface PvpSeasonsResponse {
+  /** Newest first. */
+  seasons: PvpSeasonListEntry[];
+}

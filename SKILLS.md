@@ -280,7 +280,21 @@ reads, the shape, the cache and the errors.
 ### PvP seasons and title cutoffs
 
 `PvpSeasonsService` (`src/pvp/seasons/`) is what the leaderboard endpoint reads for season
-detail and the cutoff of the ladder it shows.
+detail and the cutoff of the ladder it shows, and what `GET /pvp/seasons` lists.
+
+- **`GET /pvp/seasons`** (`pvp-seasons.controller.ts`, no parameters): `{ seasons }`,
+  newest first, one entry per Blizzard season id (shared by every region):
+  `{ seasonId, name, current, regions }`. `regions.<us|eu|kr|tw>` is
+  `{ startsAt, endsAt, current, final, rewardsFetchedAt, cutoffs: { '3v3', rbg } }`, regions
+  in that order, a region without a record absent.
+  - `name` is the first non-null across regions; Blizzard left 40, 37 and 33 and older
+    unnamed, so it is null there. Seasons 22–26 have no dates and no cutoffs.
+  - `current` at the top is "live in any region"; `final` is per region (archived).
+  - Only the 3v3 and RBG cutoffs (`Cutoff`, same shape as the leaderboard's). The ~120
+    per-spec Shuffle and Blitz cutoffs per season would make the list ~0.5 MB: they are
+    on `/pvp/cutoffs` and the leaderboard.
+  - Built by `listOf` (`pvp-season.mapper.ts`) and cached as `pvp:season-list` with the
+    other season keys, in the same transaction and TTL.
 
 - **Methods.**
   - `season(region, id)`, `currentSeason(region)`, `seasons(region)` (newest first, no
@@ -292,7 +306,7 @@ detail and the cutoff of the ladder it shows.
   the archive and still marked `current`.
 - **Cache.**
   - One Redis entry per region and season, `pvp:season:<region>:<id>` (~15–23 KB), plus
-    an index `pvp:seasons`.
+    an index `pvp:seasons` and the `/pvp/seasons` answer `pvp:season-list`.
   - All are written in one transaction with `PVP_SEASONS_CACHE_TTL_SECONDS` (3600), so
     they expire together.
   - A miss reads both collections whole (~64 documents, ~40 ms) and refills every
@@ -1618,6 +1632,7 @@ Each endpoint has one integration file:
 | Swagger | `test/docs.spec.ts` |
 | `/health*` | `test/health.spec.ts` |
 | `/search/suggestions` | `test/search.spec.ts` |
+| `/pvp/seasons` | `test/pvp-seasons.spec.ts` |
 | `/pvp/leaderboard` | `test/leaderboard.spec.ts` |
 | `/pvp/cutoffs` | `test/cutoffs.spec.ts` |
 | `/pvp/tier-list` | `test/tier-list.spec.ts` |
@@ -1669,6 +1684,7 @@ Raider.io quota); **S** marks a write to Rankwarden through its sync endpoint.
 | `/session` | 200, `subject` starts `anon:`, `scopes` `["api:read"]` |
 | `/search/suggestions?type=pvp&q=pe` | 200, `characters` ≤ 100, `guilds` `[]` |
 | `/search/suggestions?type=pve&q=ec` | 200, `characters` and `guilds` |
+| `/pvp/seasons` | 200, 21 seasons (42 → 22), 42 `current` with four regions, `endsAt: null` |
 | `/pvp/leaderboard?region=us&seasonId=42&bracket=3v3&pageSize=3` | 200, `current: true`, 3 entries, ratings non-increasing |
 | `/pvp/leaderboard?region=world&seasonId=42&bracket=3v3` | 200, `cutoff: null`, `regionCutoffs`, each entry has `region` |
 | `/pvp/leaderboard?region=us&seasonId=42&bracket=shuffle-mage-fire` | 200, every entry's `bracket` is `shuffle-mage-fire` |

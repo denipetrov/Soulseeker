@@ -5,7 +5,14 @@ import type {
   SeasonReward,
   SeasonStateDocument,
 } from '../entities/season.entity.js';
-import { buildSeasons, cutoffOf, indexOf, parseBracket, seasonFrom } from './pvp-season.mapper.js';
+import {
+  buildSeasons,
+  cutoffOf,
+  indexOf,
+  listOf,
+  parseBracket,
+  seasonFrom,
+} from './pvp-season.mapper.js';
 
 const reward = (
   bracket: string,
@@ -200,5 +207,43 @@ describe('cutoffOf', () => {
     expect(cutoffOf(season, '2v2')).toBeNull();
     expect(cutoffOf(season, 'shuffle-priest-holy')).toBeNull();
     expect(cutoffOf(season, 'nonsense')).toBeNull();
+  });
+});
+
+describe('listOf', () => {
+  const doc = (region: 'us' | 'eu' | 'kr', seasonId: number, name?: string) => ({
+    region,
+    seasonId,
+    name,
+    startsAt: new Date('2026-08-18T15:00:00Z'),
+    endsAt: null,
+    rewards: MODERN,
+  });
+
+  it('merges regions by season id, newest first, in region order', () => {
+    const seasons = [
+      seasonFrom(doc('eu', 41), { current: false, final: true }),
+      seasonFrom(doc('kr', 42), { current: true, final: false }),
+      seasonFrom(doc('us', 42, 'Season 42'), { current: true, final: false }),
+      seasonFrom(doc('us', 41), { current: false, final: true }),
+    ];
+
+    const { seasons: list } = listOf(seasons);
+
+    expect(list.map((s) => s.seasonId)).toEqual([42, 41]);
+    expect(Object.keys(list[0]!.regions)).toEqual(['us', 'kr']);
+    expect(list[0]).toMatchObject({ name: 'Season 42', current: true });
+    // Unnamed everywhere: null, not a made-up name.
+    expect(list[1]).toMatchObject({ name: null, current: false });
+    expect(list[1]!.regions.eu).toMatchObject({ final: true, current: false, endsAt: null });
+  });
+
+  it('carries only the 3v3 and RBG cutoffs', () => {
+    const { seasons: list } = listOf([seasonFrom(doc('us', 42), { current: true, final: false })]);
+    const cutoffs = list[0]!.regions.us!.cutoffs;
+
+    expect(Object.keys(cutoffs)).toEqual(['3v3', 'rbg']);
+    expect(cutoffs['3v3']).toMatchObject({ rating: 2858, title: 'Venomous Gladiator' });
+    expect(cutoffs.rbg).toMatchObject({ rating: 2400, title: null });
   });
 });

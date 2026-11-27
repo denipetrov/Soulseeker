@@ -1,4 +1,4 @@
-import type { Region } from '../../blizzard/blizzard.constants.js';
+import { REGIONS, type Region } from '../../blizzard/blizzard.constants.js';
 import type {
   ArchiveSeasonDocument,
   SeasonReward,
@@ -13,6 +13,8 @@ import {
   type FactionCutoff,
   type PvpSeason,
   type PvpSeasonIndex,
+  type PvpSeasonListEntry,
+  type PvpSeasonsResponse,
   type PvpSeasonSummary,
   type SpecCutoff,
   type SpecFamily,
@@ -170,6 +172,37 @@ export function indexOf(seasons: readonly PvpSeason[]): PvpSeasonIndex {
   for (const list of Object.values(index)) list.sort((a, b) => b.seasonId - a.seasonId);
 
   return index;
+}
+
+/**
+ * `GET /pvp/seasons`: every season, newest first, its regions side by side.
+ * Regions in the fixed order `us`, `eu`, `kr`, `tw`.
+ */
+export function listOf(seasons: readonly PvpSeason[]): PvpSeasonsResponse {
+  const byId = new Map<number, PvpSeasonListEntry>();
+  const ordered = [...seasons].sort(
+    (a, b) => REGIONS.indexOf(a.region) - REGIONS.indexOf(b.region),
+  );
+
+  for (const season of ordered) {
+    let entry = byId.get(season.seasonId);
+    if (!entry) {
+      entry = { seasonId: season.seasonId, name: null, current: false, regions: {} };
+      byId.set(season.seasonId, entry);
+    }
+    entry.name ??= season.name;
+    entry.current ||= season.current;
+    entry.regions[season.region] = {
+      startsAt: season.startsAt,
+      endsAt: season.endsAt,
+      current: season.current,
+      final: season.final,
+      rewardsFetchedAt: season.rewardsFetchedAt,
+      cutoffs: { '3v3': season.cutoffs['3v3'], rbg: season.cutoffs.rbg },
+    };
+  }
+
+  return { seasons: [...byId.values()].sort((a, b) => b.seasonId - a.seasonId) };
 }
 
 export function seasonKeyOf(region: Region, seasonId: number): string {
