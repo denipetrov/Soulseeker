@@ -601,6 +601,28 @@ current season's ladder from 0 to 100 and cuts the specs into tiers. Any family:
     is empty only when its baseline is.
   - Under 5 specs there is no S: 10 % rounds to none.
   - Real sizes: US Shuffle 5 / 11 / 11 / 8 / 5, US 3v3 6 / 6 / 16 / 7 / 5.
+- **Role modifiers** (`tier-list.modifiers.ts`, `PVP_ROLE_MODIFIERS`, PvP only). The
+  three factors' points (`baseScore`) are multiplied by the spec role's `modifier`, capped
+  at 100, giving `score`, which orders and tiers the list (a tie at the cap falls back to
+  `baseScore`, then the slug). The role is spirit-link's, through `rolesOf`.
+  - **Arena tanks** (2v2, 3v3, Shuffle): `ARENA_TANK`, × 0.5 and `placedAgainstOthers`.
+    The lines are drawn over every spec as before, so no other spec's tier moves; then a
+    tank gets no better than the best tier above D whose non-tank specs' **average** score
+    it reaches, else D (`assignTiersAround`). Without it, tanks filling the bottom spilled
+    into C once D's 4 places were full (US 3v3 had four tanks in C). An escape needs a base
+    score about twice a typical C spec's: an outlier.
+  - **Battleground tanks and healers** (RBG, Blitz): `BATTLEGROUND_TANK` × 1.3,
+    `BATTLEGROUND_HEALER` × 1.1. A team has one tank, two or three healers. The healer
+    boost is light on purpose: per spec, healers already get more seats than damage
+    dealers (RBG 4.3 % against 2.2 %; Blitz 3.6 % against 2.3 %), and Blitz US has ~1,155
+    rated characters per healer spec against ~945 per damage spec. Tanks are the role the
+    ladder undercounts (~114 per spec).
+  - Effect on real data (27 November 2026, US and EU): every arena tank is D, every other
+    spec keeps its tier; RBG US Guardian A (80.7), Protection Warrior and Blood C; Blitz
+    US Guardian C (25.3).
+  - Each entry carries `role`, `baseScore` and `modifier` (1 for a role not listed, and
+    always on Mythic+). The cache keys are `pvp:tiers:v2:…` and `pve:tiers:v2:…` since
+    these fields were added.
 - **Specs.** Every pair in `ALL_SPECS` (`src/pvp/specs.ts`, 40 pairs by class) is always
   on the list, so a spec nobody plays (a tank spec on Shuffle) is not dropped: it scores 0
   on every factor and comes last.
@@ -1175,8 +1197,9 @@ shape, applied to the current Mythic+ season.
   - the average weighed by count (50 phantom players at the floor);
   - every `ALL_SPECS` spec listed;
   - S/A/B/C/D lines at 10/25/30/25/10 %, moved to the widest drop within 2 specs.
-  The only change is the floor, which is now a parameter (`floor`, default `MIN_RATING`
-  1500), so PvP is unaffected.
+  The only changes are the floor, a parameter (`floor`, default `MIN_RATING` 1500), and
+  the role modifiers, which Mythic+ does not pass: every M+ entry has `modifier: 1`.
+  Unlike arena, an M+ group needs a tank, so nothing is cut.
 - **Mythic+ mapping.**
   - The ladder is `mplus_characters` by `mythicScore`, each character counted once for its
     profile spec. Ids become slugs through `classSlugOf` / `specSlugOf`.
@@ -1194,7 +1217,7 @@ shape, applied to the current Mythic+ season.
   `TierListSpec`, so one front-end component draws both; `averageRating` holds the average
   score.
 - **Cost.** ~150 ms uncached on `world` (95,885 covered characters grouped), ~45 ms for a
-  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:<region>:<season>`.
+  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:v2:<region>:<season>`.
 - **Real data (MN 2, world).** S tier: Arms, Subtlety, Holy Paladin, Elemental, Blood DK,
   the dominant composition. D: Destruction Warlock, Fire Mage.
 
@@ -1771,7 +1794,10 @@ Math.floor(Date.now() / 60000))`. The 503 test in `test/pve-mplus-run.spec.ts` d
 - **`world`.** Every PvP and M+ entry carries `region`. PvP world answers have
   `cutoff: null` and a `regionCutoffs` map.
 - **Tier lists.** Exactly the 40 pairs of `ALL_SPECS`; `score` in 0–100 and non-increasing;
-  tier order S, A, B, C, D; each line within 2 specs of its baseline (4/10/12/10/4 for 40).
+  tier order S, A, B, C, D for the specs with `modifier: 1`; each line within 2 specs of
+  its baseline (4/10/12/10/4 for 40). `score` = min(100, `baseScore` × `modifier`) ±0.01.
+  On 2v2, 3v3 and Shuffle every tank has `modifier: 0.5` and, today, tier D; on RBG and
+  Blitz tanks have 1.3 and healers 1.1.
 - **Shares.** PvP `share` is 0–1 and sums to ~1 over `specs`; M+ `percent` is 0–100;
   composition `share`s sum to at most 1.
 - **Optional keys.** Archived PvP rows have no profile keys at all (absent, not null).

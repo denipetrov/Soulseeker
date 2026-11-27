@@ -33,8 +33,11 @@ const EXAMPLE: TierListResponse = {
       classId: 5,
       spec: 'discipline',
       specId: 256,
+      role: 'healer',
       tier: 'S',
       score: 93.41,
+      baseScore: 93.41,
+      modifier: 1,
       topDensity: {
         top250: 21,
         top500: 44,

@@ -148,8 +148,12 @@ describe('GET /pvp/tier-list', () => {
       classId: 1,
       spec: 'protection',
       specId: 73,
-      tier: expect.any(String),
+      role: 'tank',
+      tier: 'D',
       score: 0,
+      baseScore: 0,
+      // A tank in Solo Shuffle.
+      modifier: 0.5,
       topDensity: { top250: 0, top500: 0, top1000: 0, top2500: 0, top5000: 0, score: 0 },
       representation: { count: 0, share: 0, score: 0 },
       averageRating: { value: null, adjusted: null, score: 0 },

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adjustedAverage,
+  assignTiersAround,
   rankPoints,
   scoreTierList,
   assignTiers,
   type SpecGroup,
   type SpecRef,
 } from './tier-list.scoring.js';
+import { PVP_ROLE_MODIFIERS } from './tier-list.modifiers.js';
 
 const ref = (cls: string | null, spec: string | null): SpecRef => ({ class: cls, spec });
 const rows = (count: number, cls: string, spec: string) =>
@@ -188,9 +190,12 @@ describe('scoreTierList', () => {
       classId: 1,
       specId: 73,
       spec: 'protection',
+      role: 'tank',
       // Of two specs the second is C: 90 % of 2 rounds to 2.
       tier: 'C',
       score: 0,
+      baseScore: 0,
+      modifier: 1,
       topDensity: { top250: 0, top500: 0, top1000: 0, top2500: 0, top5000: 0, score: 0 },
       representation: { count: 0, share: 0, score: 0 },
       averageRating: { value: null, adjusted: null, score: 0 },
@@ -209,5 +214,112 @@ describe('scoreTierList', () => {
 
   it('is empty when nothing has a spec, however many are listed', () => {
     expect(scoreTierList([ref(null, null)], [], [{ class: 'mage', spec: 'fire' }])).toEqual([]);
+  });
+});
+
+describe('assignTiersAround', () => {
+  it('leaves every tier as drawn when no spec is marked', () => {
+    const scores = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10];
+    expect(
+      assignTiersAround(
+        scores,
+        scores.map(() => false),
+      ),
+    ).toEqual(assignTiers(scores));
+  });
+
+  it('keeps the unmarked specs as drawn, and drops a marked one short of a tier to D', () => {
+    // Ten specs, the last three marked. Drawn: S A A B B B C C C D.
+    const scores = [100, 90, 85, 70, 65, 60, 40, 9, 8, 1];
+    const placed = [false, false, false, false, false, false, false, true, true, true];
+    const drawn = assignTiers(scores);
+    expect(drawn.slice(7)).toEqual(['C', 'C', 'D']);
+
+    const tiers = assignTiersAround(scores, placed);
+
+    expect(tiers.slice(0, 7)).toEqual(drawn.slice(0, 7));
+    // The one unmarked C scores 40: neither 9 nor 8 reaches it.
+    expect(tiers.slice(7)).toEqual(['D', 'D', 'D']);
+  });
+
+  it('lets a marked spec keep a tier whose average it reaches, never raising it', () => {
+    const scores = [100, 90, 85, 70, 65, 60, 40, 30, 20, 1];
+    const placed = [false, false, false, true, false, false, false, false, false, false];
+
+    // 70 reaches B's other specs (65, 60): it keeps its drawn B, never more.
+    expect(assignTiersAround(scores, placed)[3]).toBe(assignTiers(scores)[3]);
+  });
+});
+
+describe('role modifiers', () => {
+  /** A ladder where a tank spec does well enough on its own to be ranked first. */
+  const ladder = (bracket: string) =>
+    scoreTierList(
+      [...rows(5, 'druid', 'guardian'), ...rows(3, 'mage', 'fire'), ...rows(2, 'priest', 'holy')],
+      [
+        group('druid', 'guardian', 5, 1900),
+        group('mage', 'fire', 3, 1850),
+        group('priest', 'holy', 2, 1800),
+      ],
+      [],
+      1500,
+      PVP_ROLE_MODIFIERS[bracket],
+    );
+  const find = (list: ReturnType<typeof ladder>, spec: string) =>
+    list.find((entry) => entry.spec === spec)!;
+
+  it('halves an arena tank and orders the list by the result', () => {
+    const list = ladder('3v3');
+    const guardian = find(list, 'guardian');
+
+    expect(guardian).toMatchObject({ role: 'tank', modifier: 0.5, baseScore: 100, score: 50 });
+    expect(list.map((entry) => entry.spec)).toEqual(['fire', 'guardian', 'holy']);
+  });
+
+  it('boosts battleground tanks and healers, capped at 100, keeping the base', () => {
+    const list = ladder('rbg');
+
+    expect(find(list, 'guardian')).toMatchObject({ modifier: 1.3, baseScore: 100, score: 100 });
+    expect(find(list, 'holy')).toMatchObject({ role: 'healer', modifier: 1.1 });
+    expect(find(list, 'holy').score).toBeCloseTo(find(list, 'holy').baseScore * 1.1, 1);
+    expect(find(list, 'fire')).toMatchObject({ role: 'dps', modifier: 1 });
+  });
+
+  it('leaves every spec at 1 without modifiers, as on Mythic+', () => {
+    const list = scoreTierList(rows(1, 'druid', 'guardian'), [group('druid', 'guardian', 1, 1600)]);
+
+    expect(list[0]).toMatchObject({ modifier: 1, score: list[0]!.baseScore });
+  });
+
+  it('puts the arena tanks of a full list in D, the others as they were', () => {
+    const specs = [
+      ...['blood', 'frost', 'unholy'].map((spec) => ({ class: 'deathknight', spec })),
+      ...['guardian', 'balance', 'feral', 'restoration'].map((spec) => ({ class: 'druid', spec })),
+      ...['protection', 'arms', 'fury'].map((spec) => ({ class: 'warrior', spec })),
+    ];
+    // A spec's rows: dps and healers many, the tanks few — but more than the weakest dps.
+    const sizes: Record<string, number> = {
+      'deathknight-blood': 3,
+      'druid-guardian': 4,
+      'warrior-protection': 2,
+      'deathknight-frost': 1,
+    };
+    const size = (s: { class: string; spec: string }) =>
+      sizes[`${s.class}-${s.spec}`] ?? 20 + specs.indexOf(s);
+    const top = specs.flatMap((s) => rows(size(s), s.class, s.spec));
+    const groups = specs.map((s) => group(s.class, s.spec, size(s), 1700));
+
+    const plain = scoreTierList(top, groups, specs);
+    const modified = scoreTierList(top, groups, specs, 1500, PVP_ROLE_MODIFIERS['3v3']);
+    const tierOf = (list: typeof plain, spec: string) => find(list, spec).tier;
+
+    expect(['blood', 'guardian', 'protection'].map((spec) => tierOf(modified, spec))).toEqual([
+      'D',
+      'D',
+      'D',
+    ]);
+    for (const spec of ['frost', 'unholy', 'balance', 'feral', 'restoration', 'arms', 'fury']) {
+      expect(tierOf(modified, spec)).toBe(tierOf(plain, spec));
+    }
   });
 });

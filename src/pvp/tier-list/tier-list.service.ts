@@ -12,6 +12,7 @@ import type { PvpSeason } from '../seasons/pvp-season.types.js';
 import { regionsOf, type PvpBoard } from '../world.js';
 import { ALL_SPECS } from '../specs.js';
 import type { TierListQuery } from './dto/tier-list-query.dto.js';
+import { PVP_ROLE_MODIFIERS } from './tier-list.modifiers.js';
 import {
   MIN_RATING,
   scoreTierList,
@@ -76,7 +77,8 @@ export class TierListService {
       });
     }
 
-    const key = ['pvp:tiers', query.region, season.seasonId, query.bracket].join(':');
+    // v2: entries gained role, baseScore and modifier.
+    const key = ['pvp:tiers:v2', query.region, season.seasonId, query.bracket].join(':');
     // Null — nothing classified — is not cached, so a ladder appears as soon
     // as Rankwarden enriches it.
     const list = await this.cache.getOrLoad(
@@ -153,7 +155,13 @@ export class TierListService {
       count,
       averageRating,
     }));
-    const specs = scoreTierList(top, groups, ALL_SPECS);
+    const specs = scoreTierList(
+      top,
+      groups,
+      ALL_SPECS,
+      MIN_RATING,
+      PVP_ROLE_MODIFIERS[query.bracket],
+    );
     if (specs.length === 0) return null;
 
     const unlisted = specs

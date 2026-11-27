@@ -1,4 +1,6 @@
+import { rolesOf } from '../roles.js';
 import { classIdOf, specIdOf } from '../specs.js';
+import type { RoleModifiers } from './tier-list.modifiers.js';
 import type { Tier, TierListSpec } from './tier-list.types.js';
 
 /** The rating representation and average rating count from: rows at or above it. */
@@ -163,6 +165,48 @@ export function assignTiers(scores: readonly number[]): Tier[] {
   });
 }
 
+/** The highest score: a boosted spec is capped at it. */
+export const MAX_SCORE = 100;
+
+/**
+ * Tiers for scores best first, where `placed[i]` marks a spec of a role that
+ * must earn its tier (`RoleModifier.placedAgainstOthers`).
+ *
+ * The lines are drawn over every spec, as `assignTiers` does, so the others
+ * keep the tiers they would have. A marked spec then gets no better than the
+ * best tier whose unmarked specs it scores at least the average of — a typical
+ * spec of the tier, not merely its weakest — and D when it reaches none: it
+ * can no longer land in C only because D's share was full of its fellows.
+ */
+export function assignTiersAround(scores: readonly number[], placed: readonly boolean[]): Tier[] {
+  const tiers = assignTiers(scores);
+  if (!placed.some(Boolean)) return tiers;
+
+  const sums = new Map<Tier, { total: number; count: number }>();
+  scores.forEach((score, i) => {
+    if (placed[i]) return;
+    const sum = sums.get(tiers[i]!) ?? { total: 0, count: 0 };
+    sum.total += score;
+    sum.count++;
+    sums.set(tiers[i]!, sum);
+  });
+  const average = (tier: Tier) => {
+    const sum = sums.get(tier);
+    return sum ? sum.total / sum.count : null;
+  };
+  const rank = (tier: Tier) => TIERS.findIndex((entry) => entry.tier === tier);
+
+  return tiers.map((drawn, i) => {
+    if (!placed[i]) return drawn;
+    const reached =
+      TIERS.find(({ tier }) => {
+        const bar = average(tier);
+        return tier !== 'D' && bar !== null && scores[i]! >= bar;
+      })?.tier ?? 'D';
+    return rank(reached) > rank(drawn) ? reached : drawn;
+  });
+}
+
 /**
  * The tier list of one ladder.
  *
@@ -174,6 +218,10 @@ export function assignTiers(scores: readonly number[]): Tier[] {
  * - **Average rating (20)**: by order of the spec's mean rating there, taken
  *   with its count by `adjustedAverage`, so a handful of players does not
  *   outrank a spec of thousands at a similar average.
+ *
+ * `modifiers` then multiply a role's points (`PVP_ROLE_MODIFIERS`), capped at
+ * 100: the list is ordered and tiered by the result, `score`, and `baseScore`
+ * keeps the points before it.
  *
  * Specs are `specs` — every one listed is scored, one with no rows getting 0
  * on each factor — and any other seen in either read. `top` is the ladder best
@@ -188,6 +236,7 @@ export function scoreTierList(
   specs: readonly { class: string; spec: string }[] = [],
   /** The lowest value the groups counted: 1500 rating on PvP, 2000 score on Mythic+. */
   floor = MIN_RATING,
+  modifiers: RoleModifiers = {},
 ): TierListSpec[] {
   if (groups.length === 0 && !top.some((row) => row.class && row.spec)) return [];
 
@@ -248,15 +297,25 @@ export function scoreTierList(
       number,
     ];
 
+    const base = densityPoints + representation[i]! + averageRating[i]!;
+    const role = rolesOf(s.class, s.spec)?.role ?? null;
+    const modifier = role ? modifiers[role] : undefined;
+    const factor = modifier?.factor ?? 1;
+
     return {
-      raw: densityPoints + representation[i]! + averageRating[i]!,
+      base,
+      raw: Math.min(base * factor, MAX_SCORE),
+      placed: modifier?.placedAgainstOthers ?? false,
       spec: {
         class: s.class,
         classId: classIdOf(s.class),
         spec: s.spec,
         specId: specIdOf(s.class, s.spec),
+        role,
         tier: 'D' as Tier,
         score: 0,
+        baseScore: round(base, 2),
+        modifier: factor,
         topDensity: { top250, top500, top1000, top2500, top5000, score: round(densityPoints, 2) },
         representation: {
           count: group?.count ?? 0,
@@ -274,10 +333,16 @@ export function scoreTierList(
     };
   });
 
-  // Best first; a tie falls back to the slug, so the order never depends on Mongo's.
-  scored.sort((a, b) => b.raw - a.raw || keyOf(a.spec).localeCompare(keyOf(b.spec)));
+  // Best first; a tie — two boosted specs at the cap — falls back to the points
+  // before the modifier, then the slug, so the order never depends on Mongo's.
+  scored.sort(
+    (a, b) => b.raw - a.raw || b.base - a.base || keyOf(a.spec).localeCompare(keyOf(b.spec)),
+  );
 
-  const tiers = assignTiers(scored.map(({ raw }) => raw));
+  const tiers = assignTiersAround(
+    scored.map(({ raw }) => raw),
+    scored.map(({ placed }) => placed),
+  );
 
   return scored.map(({ raw, spec }, index) => ({
     ...spec,
