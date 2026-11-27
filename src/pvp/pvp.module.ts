@@ -14,6 +14,7 @@ import { LeaderboardController } from './leaderboard/leaderboard.controller.js';
 import { LeaderboardService } from './leaderboard/leaderboard.service.js';
 import { RepresentationController } from './representation/representation.controller.js';
 import { RepresentationService } from './representation/representation.service.js';
+import { PvpSeasonsController } from './seasons/pvp-seasons.controller.js';
 import { PvpSeasonsService } from './seasons/pvp-seasons.service.js';
 import { TierListController } from './tier-list/tier-list.controller.js';
 import { TierListService } from './tier-list/tier-list.service.js';
@@ -32,6 +33,7 @@ import { TierListService } from './tier-list/tier-list.service.js';
     CutoffsController,
     TierListController,
     HeroTalentsController,
+    PvpSeasonsController,
   ],
   providers: [
     PvpSeasonsService,

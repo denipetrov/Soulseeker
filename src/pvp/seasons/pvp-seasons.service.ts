@@ -8,17 +8,20 @@ import { Collections } from '../../database/collections.js';
 import { MongoService } from '../../database/mongo.service.js';
 import { CacheService } from '../../redis/cache.service.js';
 import type { ArchiveSeasonDocument, SeasonStateDocument } from '../entities/season.entity.js';
-import { buildSeasons, cutoffOf, indexOf, seasonKeyOf } from './pvp-season.mapper.js';
+import { buildSeasons, cutoffOf, indexOf, listOf, seasonKeyOf } from './pvp-season.mapper.js';
 import type {
   Cutoff,
   PvpSeason,
   PvpSeasonIndex,
+  PvpSeasonsResponse,
   PvpSeasonSummary,
   SpecCutoff,
 } from './pvp-season.types.js';
 
 /** The list of every region's seasons. */
 const INDEX_KEY = 'pvp:seasons';
+/** `GET /pvp/seasons`: every season, its regions side by side. */
+const LIST_KEY = 'pvp:season-list';
 /** One region's season with its cutoffs: `pvp:season:eu:42`. */
 const seasonCacheKey = (region: Region, seasonId: number) =>
   `pvp:season:${seasonKeyOf(region, seasonId)}`;
@@ -39,8 +42,9 @@ const SEASON_PROJECTION = {
  * PvP seasons and their title cutoffs, live and archived, from Redis.
  *
  * The cache holds one entry per region and season (`pvp:season:<region>:<id>`),
- * so a leaderboard reads exactly the season it shows, about 15 KB, and an
- * index of every region's seasons (`pvp:seasons`). All of them are written
+ * so a leaderboard reads exactly the season it shows, about 15 KB, an index
+ * of every region's seasons (`pvp:seasons`), and the answer of
+ * `GET /pvp/seasons` (`pvp:season-list`). All of them are written
  * together, in one transaction with one TTL (`PVP_SEASONS_CACHE_TTL_SECONDS`,
  * an hour), so they expire together.
  *
@@ -98,6 +102,11 @@ export class PvpSeasonsService {
     return index[region] ?? [];
   }
 
+  /** Every season, newest first, each region's dates, flags and 3v3 and RBG cutoffs. */
+  async list(): Promise<PvpSeasonsResponse> {
+    return (await this.cache.get<PvpSeasonsResponse>(LIST_KEY)) ?? listOf(await this.reload());
+  }
+
   /**
    * The cutoff of one ladder in one season, by ladder name: `3v3`, `rbg`,
    * `shuffle-mage-fire`. Null for 2v2, for a season or ladder without one.
@@ -134,7 +143,10 @@ export class PvpSeasonsService {
     ]);
 
     const seasons = buildSeasons(archived, live);
-    const entries = new Map<string, unknown>([[INDEX_KEY, indexOf(seasons)]]);
+    const entries = new Map<string, unknown>([
+      [INDEX_KEY, indexOf(seasons)],
+      [LIST_KEY, listOf(seasons)],
+    ]);
     for (const season of seasons) {
       entries.set(seasonCacheKey(season.region, season.seasonId), season);
     }
