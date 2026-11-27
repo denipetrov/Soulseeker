@@ -124,6 +124,12 @@ export function currentEntry(
       heroTalents: loadout.heroTalentTree?.name ?? null,
       heroTalentId: loadout.heroTalentTree?.id ?? null,
       talentLoadoutCode: loadout.talentLoadoutCode ?? null,
+      pvpTalents: (loadout.pvpTalents ?? []).map(({ slot, id, name, spellId }) => ({
+        slot,
+        id,
+        name,
+        spellId: spellId ?? null,
+      })),
     })),
   };
 }

@@ -17,6 +17,14 @@ export interface NamedRef {
   name: string;
 }
 
+/** One chosen PvP talent. The id differs by spec for one talent; `spellId` does not. */
+export interface PvpTalent {
+  slot: number;
+  id: number;
+  name: string;
+  spellId: number | null;
+}
+
 export interface BracketStanding {
   rank: number;
   rating: number;
@@ -42,6 +50,11 @@ export interface CharacterProfile {
     spec: NamedRef;
     talentLoadoutCode: string | null;
     heroTalentTree: NamedRef | null;
+    /**
+     * The spec's chosen PvP talents, in slot order (Rankwarden 2b07fb8). Absent
+     * on a document whose specs Rankwarden last fetched before it stored them.
+     */
+    pvpTalents?: PvpTalent[];
   }[];
   level: number;
   gender: string | null;

@@ -39,6 +39,18 @@ const profile = z.object({
         spec: namedRef,
         talentLoadoutCode: z.string().nullable().default(null),
         heroTalentTree: namedRef.nullable().default(null),
+        // Rankwarden defaults a missing list to `[]` and stores it, so a push
+        // without it would wipe the spec's stored PvP talents: always send it.
+        pvpTalents: z
+          .array(
+            z.object({
+              slot: z.number().int(),
+              id: z.number().int(),
+              name: z.string(),
+              spellId: z.number().int().nullable().default(null),
+            }),
+          )
+          .default([]),
       }),
     )
     .optional(),

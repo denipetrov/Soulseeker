@@ -33,6 +33,7 @@ const profile = (cls: string, spec: string, hero: string) => ({
       spec: { id: 2, name: spec },
       talentLoadoutCode: 'CODE',
       heroTalentTree: { id: 3, name: hero },
+      pvpTalents: [{ slot: 1, id: 5561, name: 'Ice Form', spellId: 198144 }],
     },
   ],
   realmName: 'Kazzak',
@@ -259,6 +260,7 @@ describe('GET /pvp/leaderboard — current season', () => {
           heroTalents: 'Sunfury',
           heroTalentId: 3,
           talentLoadoutCode: 'CODE',
+          pvpTalents: [{ slot: 1, id: 5561, name: 'Ice Form', spellId: 198144 }],
         },
       ],
     });
