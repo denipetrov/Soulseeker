@@ -65,7 +65,8 @@ export class PveTierListService {
     const { slug: season } = await this.seasons.resolve(query.region, CURRENT_SEASON);
 
     const list = await this.cache.getOrLoad(
-      `pve:tiers:${query.region}:${season}`,
+      // v2: entries gained role, baseScore and modifier.
+      `pve:tiers:v2:${query.region}:${season}`,
       () => this.compute(query.region, season),
       this.cacheTtlSeconds,
     );

@@ -19,9 +19,9 @@ describe('representationQuerySchema', () => {
       bracket: '3v3',
       rating: 2100,
       date: new Date('2026-10-20T00:00:00.000Z'),
-      getEarliestDate: false,
+      returnAvailableDates: false,
     });
-    expect(parse({ getEarliestDate: 'true' }).data?.getEarliestDate).toBe(true);
+    expect(parse({ returnAvailableDates: 'true' }).data?.returnAvailableDates).toBe(true);
   });
 
   it("accepts exactly spirit-link's tracked cutoffs", () => {
@@ -46,6 +46,6 @@ describe('representationQuerySchema', () => {
   it('refuses unknown brackets and regions, and a non-boolean flag', () => {
     expect(parse({ bracket: 'shuffle-mage-fire' }).success).toBe(false);
     expect(parse({ region: 'cn' }).success).toBe(false);
-    expect(parse({ getEarliestDate: 'yes' }).success).toBe(false);
+    expect(parse({ returnAvailableDates: 'yes' }).success).toBe(false);
   });
 });

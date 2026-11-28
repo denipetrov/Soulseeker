@@ -369,7 +369,7 @@ the regions a board covers. The character page is one character, so it has none.
   - Per region, a rollover day keeps the newer season. `computedAt` is the latest region's.
   - `regions` (now on every answer, and on each history day) lists the regions in it.
   - `latest` is the newest day any region has, combining the regions that have it.
-    `earliestDate` is the first day any region has classified specs.
+    `availableDates` lists a day once if any region has classified specs on it.
 - **Tier list.** Both reads run across every region on the current season: the top 5,000
   of all of them merged by rating, and every row at or above 1500. ~175 ms uncached for
   world Shuffle.
@@ -601,6 +601,28 @@ current season's ladder from 0 to 100 and cuts the specs into tiers. Any family:
     is empty only when its baseline is.
   - Under 5 specs there is no S: 10 % rounds to none.
   - Real sizes: US Shuffle 5 / 11 / 11 / 8 / 5, US 3v3 6 / 6 / 16 / 7 / 5.
+- **Role modifiers** (`tier-list.modifiers.ts`, `PVP_ROLE_MODIFIERS`, PvP only). The
+  three factors' points (`baseScore`) are multiplied by the spec role's `modifier`, capped
+  at 100, giving `score`, which orders and tiers the list (a tie at the cap falls back to
+  `baseScore`, then the slug). The role is spirit-link's, through `rolesOf`.
+  - **Arena tanks** (2v2, 3v3, Shuffle): `ARENA_TANK`, × 0.5 and `placedAgainstOthers`.
+    The lines are drawn over every spec as before, so no other spec's tier moves; then a
+    tank gets no better than the best tier above D whose non-tank specs' **average** score
+    it reaches, else D (`assignTiersAround`). Without it, tanks filling the bottom spilled
+    into C once D's 4 places were full (US 3v3 had four tanks in C). An escape needs a base
+    score about twice a typical C spec's: an outlier.
+  - **Battleground tanks and healers** (RBG, Blitz): `BATTLEGROUND_TANK` × 1.3,
+    `BATTLEGROUND_HEALER` × 1.1. A team has one tank, two or three healers. The healer
+    boost is light on purpose: per spec, healers already get more seats than damage
+    dealers (RBG 4.3 % against 2.2 %; Blitz 3.6 % against 2.3 %), and Blitz US has ~1,155
+    rated characters per healer spec against ~945 per damage spec. Tanks are the role the
+    ladder undercounts (~114 per spec).
+  - Effect on real data (27 November 2026, US and EU): every arena tank is D, every other
+    spec keeps its tier; RBG US Guardian A (80.7), Protection Warrior and Blood C; Blitz
+    US Guardian C (25.3).
+  - Each entry carries `role`, `baseScore` and `modifier` (1 for a role not listed, and
+    always on Mythic+). The cache keys are `pvp:tiers:v2:…` and `pve:tiers:v2:…` since
+    these fields were added.
 - **Specs.** Every pair in `ALL_SPECS` (`src/pvp/specs.ts`, 40 pairs by class) is always
   on the list, so a spec nobody plays (a tank spec on Shuffle) is not dropped: it scores 0
   on every factor and comes last.
@@ -671,12 +693,12 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
 
 ### PvP spec representation
 
-`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&getEarliestDate=true]`
+`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&returnAvailableDates=true]`
 (`src/pvp/representation/`). It reads one snapshot from Rankwarden's
 `spec_representation` straight from MongoDB.
 
 - **Not cached, on purpose.** The collection is a few hundred small documents, and a
-  request reads one, or two with `getEarliestDate`.
+  request reads one, plus a `distinct` of at most 30 dates with `returnAvailableDates`.
 - **Parameters.**
   - `rating` must be one of `REPRESENTATION_MIN_RATINGS` from
     `@denipetrov/spirit-link/constants` (≥ 0.3.0): `1500, 1800, 2100, 2300, 2700`.
@@ -693,12 +715,21 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
 - **404** when there is no snapshot: for a day (today before the daily job has run, or a
   day the job missed), or for `latest` with nothing stored at all. A 200 therefore
   always carries a real snapshot. The front end's first load should ask for
-  `date=latest&getEarliestDate=true`, which answers as soon as Rankwarden has written
-  one day.
-- **`earliestDate`** is the first day whose snapshot has `classified > 0` for the same
-  region, bracket and rating. Snapshots from before Rankwarden enriched a 2v2, 3v3 or
-  RBG ladder count players but name no spec, and the calendar should not offer them.
-  It is null when no day qualifies, which is every EU 2v2, 3v3 and RBG snapshot today.
+  `date=latest&returnAvailableDates=true`, which answers as soon as Rankwarden has
+  written one day.
+- **`availableDates`** (with `returnAvailableDates=true`; replaced `getEarliestDate` /
+  `earliestDate` on 28 November 2026) is every day of the last 30 UTC days, today
+  included (`AVAILABLE_DATES_DAYS`), whose snapshot has `classified > 0` for the same
+  region, bracket and rating, as `YYYY-MM-DD`, oldest first. It is the date picker's
+  list, so it is the same whichever `date` is asked for.
+  - Snapshots from before Rankwarden enriched a 2v2, 3v3 or RBG ladder count players but
+    name no spec, and the calendar should not offer them.
+  - Days the job missed are absent, so the front end must not assume the days run on.
+  - Empty, not absent, when no day in the window qualifies.
+  - The window is fixed to today, so `date=2026-10-20` asked on 28 November lists
+    nothing older than 30 October. The history endpoint covers 31 days.
+  - `getEarliestDate` is no longer read: an old client sending it gets no error and no
+    dates.
 - **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
   `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
 
@@ -1140,7 +1171,7 @@ Mythic+ season's best runs were played with, from Rankwarden's `mplus_spec_repre
 - **Season-based, not dated.** Rankwarden keeps one document per season, region and
   dungeon. It recomputes the live season after every pass, overwriting it, and writes a
   finished season once from the archive. So where `/pvp/spec-representation` takes `date`
-  and `getEarliestDate`, this takes:
+  and `returnAvailableDates`, this takes:
   - `season`: `current` (default) or a slug, resolved by `MplusSeasonResolver`;
   - `getSeasons=true`: the seasons with a snapshot for that region and dungeon, newest
     first, for a season picker.
@@ -1175,8 +1206,9 @@ shape, applied to the current Mythic+ season.
   - the average weighed by count (50 phantom players at the floor);
   - every `ALL_SPECS` spec listed;
   - S/A/B/C/D lines at 10/25/30/25/10 %, moved to the widest drop within 2 specs.
-  The only change is the floor, which is now a parameter (`floor`, default `MIN_RATING`
-  1500), so PvP is unaffected.
+  The only changes are the floor, a parameter (`floor`, default `MIN_RATING` 1500), and
+  the role modifiers, which Mythic+ does not pass: every M+ entry has `modifier: 1`.
+  Unlike arena, an M+ group needs a tank, so nothing is cut.
 - **Mythic+ mapping.**
   - The ladder is `mplus_characters` by `mythicScore`, each character counted once for its
     profile spec. Ids become slugs through `classSlugOf` / `specSlugOf`.
@@ -1194,7 +1226,7 @@ shape, applied to the current Mythic+ season.
   `TierListSpec`, so one front-end component draws both; `averageRating` holds the average
   score.
 - **Cost.** ~150 ms uncached on `world` (95,885 covered characters grouped), ~45 ms for a
-  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:<region>:<season>`.
+  region. Cached for `TIER_LIST_CACHE_TTL_SECONDS` (1 h) under `pve:tiers:v2:<region>:<season>`.
 - **Real data (MN 2, world).** S tier: Arms, Subtlety, Holy Paladin, Elemental, Blood DK,
   the dominant composition. D: Destruction Warlock, Fire Mage.
 
@@ -1692,7 +1724,7 @@ Raider.io quota); **S** marks a write to Rankwarden through its sync endpoint.
 | `/pvp/cutoffs?region=us&bracket=3v3&class=rogue&spec=subtlety` | 200, every character at or above `cutoff.rating` |
 | `/pvp/tier-list?region=us&bracket=shuffle` | 200, 40 specs, scores non-increasing, tiers S→D in order |
 | `/pvp/hero-talents?region=world&bracket=3v3&top=50` | 200, 13 classes; every spec's `covered` ≤ `characters` ≤ 50 |
-| `/pvp/spec-representation?region=eu&bracket=shuffle&rating=2100&date=latest&getEarliestDate=true` | 200, `share`s sum to ~1, `earliestDate` key present |
+| `/pvp/spec-representation?region=eu&bracket=shuffle&rating=2100&date=latest&returnAvailableDates=true` | 200, `share`s sum to ~1, `availableDates` ascending, ≤ 30, includes `date` when it is in the window |
 | `/pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | 200, `days` oldest first, all within `from`–`to` |
 | `/pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | 200 **U S**; `brackets` non-empty; Rankwarden logs "Synced us/Petkick" |
 | `/pve/character?region=us&realmSlug=illidan&characterName=Bondd` | 200 **U S**; `previousMythicScore` key present; Rankwarden logs "Synced Mythic+ us/illidan/bondd" |
@@ -1771,7 +1803,10 @@ Math.floor(Date.now() / 60000))`. The 503 test in `test/pve-mplus-run.spec.ts` d
 - **`world`.** Every PvP and M+ entry carries `region`. PvP world answers have
   `cutoff: null` and a `regionCutoffs` map.
 - **Tier lists.** Exactly the 40 pairs of `ALL_SPECS`; `score` in 0–100 and non-increasing;
-  tier order S, A, B, C, D; each line within 2 specs of its baseline (4/10/12/10/4 for 40).
+  tier order S, A, B, C, D for the specs with `modifier: 1`; each line within 2 specs of
+  its baseline (4/10/12/10/4 for 40). `score` = min(100, `baseScore` × `modifier`) ±0.01.
+  On 2v2, 3v3 and Shuffle every tank has `modifier: 0.5` and, today, tier D; on RBG and
+  Blitz tanks have 1.3 and healers 1.1.
 - **Shares.** PvP `share` is 0–1 and sums to ~1 over `specs`; M+ `percent` is 0–100;
   composition `share`s sum to at most 1.
 - **Optional keys.** Archived PvP rows have no profile keys at all (absent, not null).

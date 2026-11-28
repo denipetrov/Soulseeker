@@ -1,3 +1,4 @@
+import type { Role } from '../roles.js';
 import type { PvpBoard } from '../world.js';
 
 export type Tier = 'S' | 'A' | 'B' | 'C' | 'D';
@@ -11,9 +12,23 @@ export interface TierListSpec {
   spec: string;
   /** Blizzard's spec id; null only for a spec the data has but `specs.ts` does not. */
   specId: number | null;
+  /** `tank`, `healer` or `dps`; null only for a spec spirit-link does not list. */
+  role: Role | null;
   tier: Tier;
-  /** 0–100: the three factors' points added up. Specs are ordered by it. */
+  /**
+   * 0–100: `baseScore` times `modifier`, capped at 100. Specs are ordered and
+   * tiered by it.
+   */
   score: number;
+  /** 0–100: the three factors' points added up, before the role's modifier. */
+  baseScore: number;
+  /**
+   * What the role's points are multiplied by on this ladder: 0.5 for tanks in
+   * arena (2v2, 3v3, Solo Shuffle), which are also tiered against the other
+   * specs rather than counted in the tiers' shares; 1.3 for tanks and 1.1
+   * for healers in battlegrounds (RBG, Blitz); 1 otherwise and on Mythic+.
+   */
+  modifier: number;
   /**
    * How many of the ladder's top 250, 500, 1,000, 2,500 and 5,000 rows are
    * this spec. `score` is out of 45.
