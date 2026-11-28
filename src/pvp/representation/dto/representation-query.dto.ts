@@ -11,8 +11,11 @@ const FAMILIES = [...CORE_BRACKETS, ...SPEC_FAMILIES] as const;
 /** `date=latest`: the newest snapshot stored, whatever day it is. */
 export const LATEST = 'latest';
 
+/** UTC days `returnAvailableDates` covers, today included. */
+export const AVAILABLE_DATES_DAYS = 30;
+
 /**
- * `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20&getEarliestDate=true`
+ * `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=2026-10-20&returnAvailableDates=true`
  *
  * `rating` must be one of spirit-link's `REPRESENTATION_MIN_RATINGS`, the
  * cutoffs Rankwarden writes snapshots at and the front end offers: any other
@@ -68,14 +71,15 @@ export const representationQuerySchema = z.object({
         'response `date` says which day was answered.',
       example: LATEST,
     }),
-  getEarliestDate: z
+  returnAvailableDates: z
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true')
     .meta({
       description:
-        'Also return `earliestDate`: the first day with classified specs for this region, ' +
-        'bracket and rating. For the first load of the page.',
+        `Also return \`availableDates\`: every day of the last ${AVAILABLE_DATES_DAYS} UTC days, ` +
+        'today included, with classified specs for this region, bracket and rating, oldest ' +
+        'first. For the date picker on the first load of the page.',
     }),
 });
 

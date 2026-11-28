@@ -99,7 +99,7 @@ const EXAMPLE: RepresentationResponse = {
       ],
     },
   ],
-  earliestDate: '2026-10-14',
+  availableDates: ['2026-10-14', '2026-10-15', '2026-10-16', '2026-10-20'],
 };
 
 @ApiTags('pvp')

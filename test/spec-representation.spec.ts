@@ -48,6 +48,17 @@ async function representation(query: string): Promise<{ status: number; body: Js
 
 const base = 'region=us&bracket=3v3&rating=2100';
 
+const DAY_MS = 86_400_000;
+const midnight = new Date();
+midnight.setUTCHours(0, 0, 0, 0);
+/** `YYYY-MM-DD` of `days` UTC days before today. */
+const ago = (days: number) =>
+  new Date(midnight.getTime() - days * DAY_MS).toISOString().slice(0, 10);
+/** Snapshots within the last 30 days, on a key of their own: EU RBG at 2100. */
+const recent = (days: number, extra: Record<string, unknown> = {}) =>
+  snapshot(ago(days), { region: 'eu', family: 'rbg', ...extra });
+const recentBase = 'region=eu&bracket=rbg&rating=2100';
+
 beforeAll(async () => {
   app = await bootTestApp({ env: { RATE_LIMIT_API_PER_MINUTE: '1000' } });
   await resetRedis(app);
@@ -64,6 +75,16 @@ beforeAll(async () => {
     snapshot('2026-10-09', { region: 'eu' }),
     // A ladder Rankwarden has not enriched: snapshots, but never a classified spec.
     snapshot('2026-10-20', { region: 'tw', classified: 0, specs: [] }),
+    // 30 days back: one day before the window.
+    recent(30),
+    // The window's first day, today being its last.
+    recent(29),
+    // Counted, not classified: not offered.
+    recent(5, { classified: 0, specs: [] }),
+    recent(2),
+    recent(0),
+    // Another cutoff in the window: not this key's.
+    recent(3, { minRating: 1500 }),
   ]);
 
   token = (await anonymousTokens(app)).access_token;
@@ -94,32 +115,44 @@ describe('GET /pvp/spec-representation', () => {
       'mage-fire',
     ]);
     expect(body.specs[0]).toMatchObject({ count: 70, heroTalents: [{ name: 'Tree' }] });
-    expect(body).not.toHaveProperty('earliestDate');
+    expect(body).not.toHaveProperty('availableDates');
   });
 
-  it('gives the first day with classified specs for the same region, bracket and rating', async () => {
-    const { body } = await representation(`${base}&date=2026-10-20&getEarliestDate=true`);
+  it('lists the days of the last 30 with classified specs for the same key, oldest first', async () => {
+    const { status, body } = await representation(
+      `${recentBase}&date=latest&returnAvailableDates=true`,
+    );
 
-    // 2026-10-12 has a snapshot but no classified specs; the 9th to 11th are other keys.
-    expect(body.earliestDate).toBe('2026-10-14');
+    expect(status).toBe(200);
+    expect(body.date).toBe(ago(0));
+    expect(body.availableDates).toEqual([ago(29), ago(2), ago(0)]);
+  });
+
+  it('lists the same days whichever day is asked for', async () => {
+    const { body } = await representation(`${recentBase}&date=${ago(2)}&returnAvailableDates=true`);
+
+    expect(body.availableDates).toEqual([ago(29), ago(2), ago(0)]);
   });
 
   it('answers 404 for a day without a snapshot', async () => {
-    const { status, body } = await representation(`${base}&date=2026-10-21&getEarliestDate=true`);
+    const { status, body } = await representation(
+      `${base}&date=2026-10-21&returnAvailableDates=true`,
+    );
 
     expect(status).toBe(404);
     expect(body.message).toBe('No spec representation snapshot for us 3v3 at 2100 on 2026-10-21');
   });
 
   it('answers the newest snapshot for date=latest, and says which day it is', async () => {
-    const { status, body } = await representation(`${base}&date=latest&getEarliestDate=true`);
+    const { status, body } = await representation(`${base}&date=latest&returnAvailableDates=true`);
 
     expect(status).toBe(200);
     expect(body).toMatchObject({
       date: '2026-10-20',
       computedAt: '2026-10-20T08:00:00.000Z',
       total: 130,
-      earliestDate: '2026-10-14',
+      // Every US 3v3 snapshot is older than the last 30 days.
+      availableDates: [],
     });
     expect(body.specs).toHaveLength(2);
   });
@@ -138,17 +171,14 @@ describe('GET /pvp/spec-representation', () => {
     expect(body.message).toBe('No spec representation snapshot stored for kr 3v3 at 2100');
   });
 
-  it('answers an unclassified snapshot as it is, with a null earliest date', async () => {
-    const { status, body } = await representation(
-      'region=tw&bracket=3v3&rating=2100&date=latest&getEarliestDate=true',
-    );
+  it('answers an unclassified snapshot as it is', async () => {
+    const { status, body } = await representation('region=tw&bracket=3v3&rating=2100&date=latest');
 
     expect(status).toBe(200);
     expect(body).toMatchObject({
       date: '2026-10-20',
       classified: 0,
       specs: [],
-      earliestDate: null,
     });
   });
 

@@ -23,11 +23,12 @@ export interface RepresentationResponse {
   /** Most played first. */
   specs: SpecShare[];
   /**
-   * Only when `getEarliestDate=true`: the first day, `YYYY-MM-DD`, whose
-   * snapshot has classified specs for this region, bracket and rating. Null
-   * when no day has any yet.
+   * Only when `returnAvailableDates=true`: each day, `YYYY-MM-DD`, of the last
+   * 30 UTC days (today included) whose snapshot has classified specs for this
+   * region, bracket and rating, oldest first; on `world`, a day any region
+   * has. Empty when no day in the window has any.
    */
-  earliestDate?: string | null;
+  availableDates?: string[];
 }
 
 /** One stored day of a history. */

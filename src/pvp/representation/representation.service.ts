@@ -15,7 +15,11 @@ import {
   HISTORY_DAYS,
   type RepresentationHistoryQuery,
 } from './dto/representation-history-query.dto.js';
-import { LATEST, type RepresentationQuery } from './dto/representation-query.dto.js';
+import {
+  AVAILABLE_DATES_DAYS,
+  LATEST,
+  type RepresentationQuery,
+} from './dto/representation-query.dto.js';
 import type {
   RepresentationDay,
   RepresentationHistoryResponse,
@@ -71,7 +75,7 @@ function newestPerRegion(docs: readonly Snapshot[]): Snapshot[] {
  * figures are its regions' snapshots added up (`combineSnapshots`): counts
  * summed, shares worked out again. Only the regions with a snapshot that day
  * are in it, and `regions` says which. `latest` is the newest day any region
- * has; `earliestDate` the first day any region has classified specs.
+ * has; `availableDates` the days any region has classified specs.
  *
  * A day without a snapshot is a 404, and so is `latest` with nothing stored.
  */
@@ -83,7 +87,7 @@ export class RepresentationService {
     return this.mongo.collection<SpecRepresentationDocument>(Collections.SpecRepresentation);
   }
 
-  async snapshot(query: RepresentationQuery): Promise<RepresentationResponse> {
+  async snapshot(query: RepresentationQuery, now = new Date()): Promise<RepresentationResponse> {
     const regions = regionsOf(query.region);
     const key: Filter<SpecRepresentationDocument> = {
       region: inRegions(regions),
@@ -95,21 +99,13 @@ export class RepresentationService {
     // classified specs — the front end is asking for "now", not the best day.
     const asked = query.date === LATEST ? null : query.date;
 
-    const [date, earliest] = await Promise.all([
+    const [date, available] = await Promise.all([
       asked
         ? Promise.resolve(asked)
         : this.collection
             .findOne(key, { projection: { _id: 0, date: 1 }, sort: { date: -1 } })
             .then((doc) => (doc ? new Date(doc.date) : null)),
-      query.getEarliestDate
-        ? this.collection.findOne(
-            // "Filled" means at least one spec classified: before Rankwarden
-            // has enriched a 2v2, 3v3 or RBG ladder its snapshots count
-            // players but name no spec, and the calendar should not offer them.
-            { ...key, classified: { $gt: 0 } },
-            { projection: { _id: 0, date: 1 }, sort: { date: 1 } },
-          )
-        : Promise.resolve(null),
+      query.returnAvailableDates ? this.availableDates(key, now) : Promise.resolve([]),
     ]);
 
     const snapshots = date
@@ -143,9 +139,33 @@ export class RepresentationService {
       specs: withIds(combined.specs).sort((a, b) => b.count - a.count),
     };
 
-    if (query.getEarliestDate) response.earliestDate = earliest ? day(earliest.date) : null;
+    if (query.returnAvailableDates) response.availableDates = available;
 
     return response;
+  }
+
+  /**
+   * The days of the last `AVAILABLE_DATES_DAYS` UTC days, today included,
+   * with a filled snapshot under `key`, oldest first. "Filled" means at least
+   * one spec classified: before Rankwarden has enriched a 2v2, 3v3 or RBG
+   * ladder its snapshots count players but name no spec, and the calendar
+   * should not offer them. On `world` a day counts once, whichever regions
+   * have it. At most 30 dates a region, through `snapshot_identity`.
+   */
+  private async availableDates(
+    key: Filter<SpecRepresentationDocument>,
+    now: Date,
+  ): Promise<string[]> {
+    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const from = new Date(to.getTime() - (AVAILABLE_DATES_DAYS - 1) * DAY_MS);
+
+    const dates = await this.collection.distinct('date', {
+      ...key,
+      classified: { $gt: 0 },
+      date: { $gte: from, $lte: to },
+    });
+
+    return [...new Set(dates.map((date) => day(new Date(date))))].sort();
   }
 
   /**

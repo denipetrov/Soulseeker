@@ -369,7 +369,7 @@ the regions a board covers. The character page is one character, so it has none.
   - Per region, a rollover day keeps the newer season. `computedAt` is the latest region's.
   - `regions` (now on every answer, and on each history day) lists the regions in it.
   - `latest` is the newest day any region has, combining the regions that have it.
-    `earliestDate` is the first day any region has classified specs.
+    `availableDates` lists a day once if any region has classified specs on it.
 - **Tier list.** Both reads run across every region on the current season: the top 5,000
   of all of them merged by rating, and every row at or above 1500. ~175 ms uncached for
   world Shuffle.
@@ -693,12 +693,12 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
 
 ### PvP spec representation
 
-`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&getEarliestDate=true]`
+`GET /pvp/spec-representation?region=&bracket=&rating=&date=[&returnAvailableDates=true]`
 (`src/pvp/representation/`). It reads one snapshot from Rankwarden's
 `spec_representation` straight from MongoDB.
 
 - **Not cached, on purpose.** The collection is a few hundred small documents, and a
-  request reads one, or two with `getEarliestDate`.
+  request reads one, plus a `distinct` of at most 30 dates with `returnAvailableDates`.
 - **Parameters.**
   - `rating` must be one of `REPRESENTATION_MIN_RATINGS` from
     `@denipetrov/spirit-link/constants` (≥ 0.3.0): `1500, 1800, 2100, 2300, 2700`.
@@ -715,12 +715,21 @@ talent trees each spec's best players use, for a page like drustvar's hero-talen
 - **404** when there is no snapshot: for a day (today before the daily job has run, or a
   day the job missed), or for `latest` with nothing stored at all. A 200 therefore
   always carries a real snapshot. The front end's first load should ask for
-  `date=latest&getEarliestDate=true`, which answers as soon as Rankwarden has written
-  one day.
-- **`earliestDate`** is the first day whose snapshot has `classified > 0` for the same
-  region, bracket and rating. Snapshots from before Rankwarden enriched a 2v2, 3v3 or
-  RBG ladder count players but name no spec, and the calendar should not offer them.
-  It is null when no day qualifies, which is every EU 2v2, 3v3 and RBG snapshot today.
+  `date=latest&returnAvailableDates=true`, which answers as soon as Rankwarden has
+  written one day.
+- **`availableDates`** (with `returnAvailableDates=true`; replaced `getEarliestDate` /
+  `earliestDate` on 28 November 2026) is every day of the last 30 UTC days, today
+  included (`AVAILABLE_DATES_DAYS`), whose snapshot has `classified > 0` for the same
+  region, bracket and rating, as `YYYY-MM-DD`, oldest first. It is the date picker's
+  list, so it is the same whichever `date` is asked for.
+  - Snapshots from before Rankwarden enriched a 2v2, 3v3 or RBG ladder count players but
+    name no spec, and the calendar should not offer them.
+  - Days the job missed are absent, so the front end must not assume the days run on.
+  - Empty, not absent, when no day in the window qualifies.
+  - The window is fixed to today, so `date=2026-10-20` asked on 28 November lists
+    nothing older than 30 October. The history endpoint covers 31 days.
+  - `getEarliestDate` is no longer read: an old client sending it gets no error and no
+    dates.
 - **Order.** `specs` comes as stored, sorted by `count` descending. `share` is of
   `classified`, and each hero talent `share` is of the spec's `heroTalentsClassified`.
 
@@ -1162,7 +1171,7 @@ Mythic+ season's best runs were played with, from Rankwarden's `mplus_spec_repre
 - **Season-based, not dated.** Rankwarden keeps one document per season, region and
   dungeon. It recomputes the live season after every pass, overwriting it, and writes a
   finished season once from the archive. So where `/pvp/spec-representation` takes `date`
-  and `getEarliestDate`, this takes:
+  and `returnAvailableDates`, this takes:
   - `season`: `current` (default) or a slug, resolved by `MplusSeasonResolver`;
   - `getSeasons=true`: the seasons with a snapshot for that region and dungeon, newest
     first, for a season picker.
@@ -1715,7 +1724,7 @@ Raider.io quota); **S** marks a write to Rankwarden through its sync endpoint.
 | `/pvp/cutoffs?region=us&bracket=3v3&class=rogue&spec=subtlety` | 200, every character at or above `cutoff.rating` |
 | `/pvp/tier-list?region=us&bracket=shuffle` | 200, 40 specs, scores non-increasing, tiers S→D in order |
 | `/pvp/hero-talents?region=world&bracket=3v3&top=50` | 200, 13 classes; every spec's `covered` ≤ `characters` ≤ 50 |
-| `/pvp/spec-representation?region=eu&bracket=shuffle&rating=2100&date=latest&getEarliestDate=true` | 200, `share`s sum to ~1, `earliestDate` key present |
+| `/pvp/spec-representation?region=eu&bracket=shuffle&rating=2100&date=latest&returnAvailableDates=true` | 200, `share`s sum to ~1, `availableDates` ascending, ≤ 30, includes `date` when it is in the window |
 | `/pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | 200, `days` oldest first, all within `from`–`to` |
 | `/pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | 200 **U S**; `brackets` non-empty; Rankwarden logs "Synced us/Petkick" |
 | `/pve/character?region=us&realmSlug=illidan&characterName=Bondd` | 200 **U S**; `previousMythicScore` key present; Rankwarden logs "Synced Mythic+ us/illidan/bondd" |

@@ -129,7 +129,7 @@ All need a token except health and `/oidc`. Full parameters and responses are in
 | `GET /pvp/cutoffs?region=eu&bracket=shuffle` | Title cutoffs and how many of each spec reach them, optionally for one `role`/`subRole`; with `class`+`spec`, the characters |
 | `GET /pvp/tier-list?region=eu&bracket=shuffle` | Every spec scored 0–100 and ranked S to D; tanks × 0.5 in arena (kept in D unless an outlier), tanks × 1.3 and healers × 1.1 in RBG and Blitz |
 | `GET /pvp/hero-talents?region=world&bracket=3v3&top=50` | Hero talent trees of each spec's top players |
-| `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=latest` | Spec shares at a rating on one day; `getEarliestDate=true` for the calendar |
+| `GET /pvp/spec-representation?region=eu&bracket=3v3&rating=2100&date=latest` | Spec shares at a rating on one day; `returnAvailableDates=true` for the calendar (the last 30 days with data) |
 | `GET /pvp/spec-representation/history?region=eu&bracket=shuffle&rating=2100` | The last 31 days of spec shares |
 | `GET /pvp/character?region=us&realmSlug=tichondrius&characterName=Petkick` | One character from Blizzard; syncs ratings to Rankwarden |
 

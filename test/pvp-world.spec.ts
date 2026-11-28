@@ -293,7 +293,7 @@ describe('region=world on the PvP endpoints', () => {
   describe('/pvp/spec-representation', () => {
     it('adds the regions’ snapshots of the day up, shares worked out again', async () => {
       const { body } = await get(
-        'spec-representation?region=world&bracket=shuffle&rating=2100&date=latest&getEarliestDate=true',
+        'spec-representation?region=world&bracket=shuffle&rating=2100&date=latest&returnAvailableDates=true',
       );
 
       expect(body).toMatchObject({
@@ -302,7 +302,8 @@ describe('region=world on the PvP endpoints', () => {
         date: iso(today),
         total: 120,
         classified: 120,
-        earliestDate: iso(yesterday),
+        // A day once, whichever regions have it.
+        availableDates: [iso(yesterday), iso(today)],
         // The later of the two regions' computations.
         computedAt: new Date(today.getTime() + 9 * 3_600_000).toISOString(),
       });
